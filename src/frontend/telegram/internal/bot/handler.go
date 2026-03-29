@@ -15,14 +15,14 @@ const platform = "telegram"
 
 // FSM steps
 const (
-	stepIdle                  = ""
-	stepAwaitDealTitle        = "await_deal_title"
-	stepAwaitParticipantName  = "await_participant_name"
-	stepAwaitPurchaseTitle    = "await_purchase_title"
-	stepAwaitPurchaseAmount   = "await_purchase_amount"
-	stepAwaitPurchasePayer    = "await_purchase_payer"
-	stepDealCovSelectPayer    = "deal_cov_select_payer"
-	stepDealCovSelectCovered  = "deal_cov_select_covered"
+	stepIdle                 = ""
+	stepAwaitDealTitle       = "await_deal_title"
+	stepAwaitParticipantName = "await_participant_name"
+	stepAwaitPurchaseTitle   = "await_purchase_title"
+	stepAwaitPurchaseAmount  = "await_purchase_amount"
+	stepAwaitPurchasePayer   = "await_purchase_payer"
+	stepDealCovSelectPayer   = "deal_cov_select_payer"
+	stepDealCovSelectCovered = "deal_cov_select_covered"
 )
 
 type userState struct {
