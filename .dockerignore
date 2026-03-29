@@ -1,0 +1,4 @@
+.git/
+notes/
+src/backend/gen/
+src/frontend/telegram/gen/

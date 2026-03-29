@@ -1,0 +1,214 @@
+syntax = "proto3";
+
+package debt.v1;
+
+option go_package = "github.com/mrralexandrov/debt-bot/backend/gen/debt/v1;debtv1";
+
+service DebtService {
+  // Identity: resolve-or-create by platform+external_id
+  rpc ResolveOrCreateUser(ResolveOrCreateUserRequest) returns (ResolveOrCreateUserResponse);
+  rpc CreateUser(CreateUserRequest) returns (CreateUserResponse);
+  rpc GetUser(GetUserRequest) returns (GetUserResponse);
+  rpc UpdateUser(UpdateUserRequest) returns (UpdateUserResponse);
+
+  // Deals
+  rpc CreateDeal(CreateDealRequest) returns (CreateDealResponse);
+  rpc GetDeal(GetDealRequest) returns (GetDealResponse);
+  rpc ListUserDeals(ListUserDealsRequest) returns (ListUserDealsResponse);
+  rpc AddDealParticipant(AddDealParticipantRequest) returns (AddDealParticipantResponse);
+
+  // Deal-level coverage (person A covers person B for all purchases in this deal)
+  rpc SetDealCoverage(SetDealCoverageRequest) returns (SetDealCoverageResponse);
+  rpc RemoveDealCoverage(RemoveDealCoverageRequest) returns (RemoveDealCoverageResponse);
+
+  // Purchases
+  rpc AddPurchase(AddPurchaseRequest) returns (AddPurchaseResponse);
+  rpc ListDealPurchases(ListDealPurchasesRequest) returns (ListDealPurchasesResponse);
+
+  // Debt calculation
+  rpc CalculateDebts(CalculateDebtsRequest) returns (CalculateDebtsResponse);
+}
+
+// --- Messages ---
+
+message User {
+  string id = 1;
+  string name = 2;
+  string created_at = 3;
+}
+
+message Deal {
+  string id = 1;
+  string title = 2;
+  string created_by = 3;
+  string created_at = 4;
+  repeated string participant_ids = 5;
+  repeated Coverage coverages = 6;
+}
+
+message Purchase {
+  string id = 1;
+  string deal_id = 2;
+  string title = 3;
+  int64 amount = 4;  // in kopecks
+  string paid_by = 5;
+  string split_mode = 6;  // "all" | "custom"
+  repeated string participant_ids = 7;
+}
+
+message Coverage {
+  string payer_id   = 1;  // who covers
+  string covered_id = 2;  // whose share is covered
+}
+
+message DebtItem {
+  string from_user_id = 1;
+  string to_user_id = 2;
+  int64 amount = 3;  // in kopecks
+}
+
+// --- ResolveOrCreateUser ---
+
+message ResolveOrCreateUserRequest {
+  string platform = 1;     // e.g. "telegram" or "telegram_username"
+  string external_id = 2;  // Telegram user_id or username (without @)
+  string name = 3;         // display name (used only on creation)
+  string username = 4;     // Telegram @username (optional, used for account merging)
+}
+
+message ResolveOrCreateUserResponse {
+  User user = 1;
+  bool created = 2;
+}
+
+// --- CreateUser ---
+
+message CreateUserRequest {
+  string name = 1;
+}
+
+message CreateUserResponse {
+  User user = 1;
+}
+
+// --- GetUser ---
+
+message GetUserRequest {
+  string user_id = 1;
+}
+
+message GetUserResponse {
+  User user = 1;
+}
+
+// --- UpdateUser ---
+
+message UpdateUserRequest {
+  string user_id = 1;
+  string name = 2;
+}
+
+message UpdateUserResponse {
+  User user = 1;
+}
+
+// --- CreateDeal ---
+
+message CreateDealRequest {
+  string title = 1;
+  string created_by = 2;  // internal user_id
+}
+
+message CreateDealResponse {
+  Deal deal = 1;
+}
+
+// --- GetDeal ---
+
+message GetDealRequest {
+  string deal_id = 1;
+}
+
+message GetDealResponse {
+  Deal deal = 1;
+}
+
+// --- ListUserDeals ---
+
+message ListUserDealsRequest {
+  string user_id = 1;
+}
+
+message ListUserDealsResponse {
+  repeated Deal deals = 1;
+}
+
+// --- AddDealParticipant ---
+
+message AddDealParticipantRequest {
+  string deal_id = 1;
+  string user_id = 2;
+}
+
+message AddDealParticipantResponse {
+  Deal deal = 1;
+}
+
+// --- SetDealCoverage ---
+
+message SetDealCoverageRequest {
+  string deal_id    = 1;
+  string payer_id   = 2;  // who pays
+  string covered_id = 3;  // whose share is covered
+}
+
+message SetDealCoverageResponse {
+  Deal deal = 1;
+}
+
+// --- RemoveDealCoverage ---
+
+message RemoveDealCoverageRequest {
+  string deal_id    = 1;
+  string covered_id = 2;
+}
+
+message RemoveDealCoverageResponse {
+  Deal deal = 1;
+}
+
+// --- AddPurchase ---
+
+message AddPurchaseRequest {
+  string deal_id = 1;
+  string title = 2;
+  int64 amount = 3;  // in kopecks
+  string paid_by = 4;
+  string split_mode = 5;  // "all" | "custom"
+  repeated string participant_ids = 6;  // used when split_mode="custom"
+}
+
+message AddPurchaseResponse {
+  Purchase purchase = 1;
+}
+
+// --- ListDealPurchases ---
+
+message ListDealPurchasesRequest {
+  string deal_id = 1;
+}
+
+message ListDealPurchasesResponse {
+  repeated Purchase purchases = 1;
+}
+
+// --- CalculateDebts ---
+
+message CalculateDebtsRequest {
+  string deal_id = 1;
+}
+
+message CalculateDebtsResponse {
+  repeated DebtItem debts = 1;
+  map<string, int64> balances = 2;  // user_id -> balance in kopecks
+}

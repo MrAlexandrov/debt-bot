@@ -1,0 +1,139 @@
+package bot
+
+import (
+	"context"
+	"fmt"
+
+	pb "github.com/mrralexandrov/debt-bot/frontend/telegram/gen/debt/v1"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+)
+
+type Client struct {
+	conn pb.DebtServiceClient
+}
+
+func NewClient(addr string) (*Client, error) {
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return nil, fmt.Errorf("connect to backend: %w", err)
+	}
+	return &Client{conn: pb.NewDebtServiceClient(conn)}, nil
+}
+
+func (c *Client) CreateUser(ctx context.Context, name string) (*pb.User, error) {
+	resp, err := c.conn.CreateUser(ctx, &pb.CreateUserRequest{Name: name})
+	if err != nil {
+		return nil, err
+	}
+	return resp.User, nil
+}
+
+func (c *Client) ResolveOrCreateUser(ctx context.Context, platform, externalID, name, username string) (*pb.User, bool, error) {
+	resp, err := c.conn.ResolveOrCreateUser(ctx, &pb.ResolveOrCreateUserRequest{
+		Platform:   platform,
+		ExternalId: externalID,
+		Name:       name,
+		Username:   username,
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	return resp.User, resp.Created, nil
+}
+
+func (c *Client) GetUser(ctx context.Context, userID string) (*pb.User, error) {
+	resp, err := c.conn.GetUser(ctx, &pb.GetUserRequest{UserId: userID})
+	if err != nil {
+		return nil, err
+	}
+	return resp.User, nil
+}
+
+func (c *Client) CreateDeal(ctx context.Context, title, createdBy string) (*pb.Deal, error) {
+	resp, err := c.conn.CreateDeal(ctx, &pb.CreateDealRequest{
+		Title:     title,
+		CreatedBy: createdBy,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Deal, nil
+}
+
+func (c *Client) GetDeal(ctx context.Context, dealID string) (*pb.Deal, error) {
+	resp, err := c.conn.GetDeal(ctx, &pb.GetDealRequest{DealId: dealID})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Deal, nil
+}
+
+func (c *Client) ListUserDeals(ctx context.Context, userID string) ([]*pb.Deal, error) {
+	resp, err := c.conn.ListUserDeals(ctx, &pb.ListUserDealsRequest{UserId: userID})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Deals, nil
+}
+
+func (c *Client) AddDealParticipant(ctx context.Context, dealID, userID string) (*pb.Deal, error) {
+	resp, err := c.conn.AddDealParticipant(ctx, &pb.AddDealParticipantRequest{
+		DealId: dealID,
+		UserId: userID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Deal, nil
+}
+
+func (c *Client) SetDealCoverage(ctx context.Context, dealID, payerID, coveredID string) (*pb.Deal, error) {
+	resp, err := c.conn.SetDealCoverage(ctx, &pb.SetDealCoverageRequest{
+		DealId:    dealID,
+		PayerId:   payerID,
+		CoveredId: coveredID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Deal, nil
+}
+
+func (c *Client) RemoveDealCoverage(ctx context.Context, dealID, coveredID string) (*pb.Deal, error) {
+	resp, err := c.conn.RemoveDealCoverage(ctx, &pb.RemoveDealCoverageRequest{
+		DealId:    dealID,
+		CoveredId: coveredID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Deal, nil
+}
+
+func (c *Client) AddPurchase(ctx context.Context, dealID, title string, amount int64, paidBy, splitMode string, participantIDs []string) (*pb.Purchase, error) {
+	resp, err := c.conn.AddPurchase(ctx, &pb.AddPurchaseRequest{
+		DealId:         dealID,
+		Title:          title,
+		Amount:         amount,
+		PaidBy:         paidBy,
+		SplitMode:      splitMode,
+		ParticipantIds: participantIDs,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Purchase, nil
+}
+
+func (c *Client) ListDealPurchases(ctx context.Context, dealID string) ([]*pb.Purchase, error) {
+	resp, err := c.conn.ListDealPurchases(ctx, &pb.ListDealPurchasesRequest{DealId: dealID})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Purchases, nil
+}
+
+func (c *Client) CalculateDebts(ctx context.Context, dealID string) (*pb.CalculateDebtsResponse, error) {
+	return c.conn.CalculateDebts(ctx, &pb.CalculateDebtsRequest{DealId: dealID})
+}
