@@ -3,7 +3,6 @@ package bot
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -82,261 +81,6 @@ func (h *Handler) resetState(userID int64) {
 	h.states[userID] = &userState{participantNames: make(map[string]string)}
 }
 
-// --- Message handler (text input) ---
-
-func (h *Handler) handleMessage(msg *tgbotapi.Message) {
-	ctx := context.Background()
-	tgID := msg.From.ID
-
-	if msg.IsCommand() && msg.Command() == "start" {
-		h.resetState(tgID)
-		user := h.resolveUser(ctx, msg.From)
-		greeting := "Привет!"
-		if user != nil {
-			greeting = "Привет, " + user.Name + "!"
-		}
-		h.showMainMenu(msg.Chat.ID, 0, greeting+"\n\nЯ помогу рассчитать долги после совместных трат.")
-		return
-	}
-
-	st := h.getState(tgID)
-	text := strings.TrimSpace(msg.Text)
-
-	switch st.step {
-	case stepAwaitDealTitle:
-		if text == "" {
-			h.send(msg.Chat.ID, "Название не может быть пустым. Попробуйте ещё раз:")
-			return
-		}
-		user := h.resolveUser(ctx, msg.From)
-		if user == nil {
-			return
-		}
-		deal, err := h.client.CreateDeal(ctx, text, user.Id)
-		if err != nil {
-			h.send(msg.Chat.ID, "Ошибка при создании сделки.")
-			return
-		}
-		h.resetState(tgID)
-		h.send(msg.Chat.ID, fmt.Sprintf("✅ Сделка «%s» создана!", deal.Title))
-		h.showDealMenu(msg.Chat.ID, 0, deal.Id)
-
-	case stepAwaitParticipantName:
-		dealID := st.dealID
-		newUser, notice, err := h.resolveParticipant(ctx, msg)
-		if err != nil {
-			h.send(msg.Chat.ID, "Ошибка при добавлении участника.")
-			return
-		}
-		if newUser == nil {
-			return
-		}
-		if _, err := h.client.AddDealParticipant(ctx, dealID, newUser.Id); err != nil {
-			h.send(msg.Chat.ID, "Ошибка при добавлении в сделку.")
-			return
-		}
-		h.resetState(tgID)
-		h.send(msg.Chat.ID, fmt.Sprintf("✅ %s добавлен.%s", newUser.Name, notice))
-		h.showDealMenu(msg.Chat.ID, 0, dealID)
-
-	case stepAwaitPurchaseTitle:
-		if text == "" {
-			h.send(msg.Chat.ID, "Название не может быть пустым. Попробуйте ещё раз:")
-			return
-		}
-		st.purchaseTitle = text
-		st.step = stepAwaitPurchaseAmount
-		h.send(msg.Chat.ID, "Введите сумму в рублях (например: 150 или 99.50 или 99,50):")
-
-	case stepAwaitPurchaseAmount:
-		amt, err := parseAmount(text)
-		if err != nil || amt <= 0 {
-			h.send(msg.Chat.ID, "Неверный формат. Введите сумму (например: 150 или 99.50):")
-			return
-		}
-		st.purchaseAmt = amt
-
-		deal, err := h.client.GetDeal(ctx, st.dealID)
-		if err != nil {
-			h.send(msg.Chat.ID, "Ошибка при загрузке сделки.")
-			return
-		}
-		participants, err := h.fetchUsers(ctx, deal.ParticipantIds)
-		if err != nil || len(participants) == 0 {
-			h.send(msg.Chat.ID, "Нет участников в сделке.")
-			return
-		}
-		for _, p := range participants {
-			st.participantNames[p.Id] = p.Name
-		}
-		st.step = stepAwaitPurchasePayer
-		h.sendPayerKeyboard(msg.Chat.ID, participants)
-
-	case stepAwaitPurchasePayer:
-		h.send(msg.Chat.ID, "Выберите плательщика из кнопок выше.")
-
-	case stepDealCovSelectPayer, stepDealCovSelectCovered:
-		h.send(msg.Chat.ID, "Используйте кнопки для навигации.")
-	}
-}
-
-// --- Callback handler (button presses) ---
-
-func (h *Handler) handleCallback(cb *tgbotapi.CallbackQuery) {
-	ctx := context.Background()
-	tgID := cb.From.ID
-	chatID := cb.Message.Chat.ID
-	msgID := cb.Message.MessageID
-
-	h.api.Request(tgbotapi.NewCallback(cb.ID, ""))
-
-	data := cb.Data
-
-	switch {
-	case data == "main_menu":
-		h.resetState(tgID)
-		h.showMainMenu(chatID, msgID, "Главное меню:")
-
-	case data == "new_deal":
-		h.getState(tgID).step = stepAwaitDealTitle
-		h.editText(chatID, msgID, "Введите название сделки:")
-
-	case data == "my_deals":
-		user := h.resolveUserFromCB(ctx, cb.From)
-		if user == nil {
-			return
-		}
-		h.showDealsList(chatID, msgID, user.Id)
-
-	case strings.HasPrefix(data, "deal:"):
-		dealID := strings.TrimPrefix(data, "deal:")
-		h.resetState(tgID)
-		h.showDealMenu(chatID, msgID, dealID)
-
-	case strings.HasPrefix(data, "add_participant:"):
-		dealID := strings.TrimPrefix(data, "add_participant:")
-		st := h.getState(tgID)
-		st.step = stepAwaitParticipantName
-		st.dealID = dealID
-		h.editText(chatID, msgID, "Добавьте участника одним из способов:\n\n• Введите имя\n• Отправьте @username\n• Перешлите сообщение от участника")
-
-	case strings.HasPrefix(data, "add_purchase:"):
-		dealID := strings.TrimPrefix(data, "add_purchase:")
-		st := h.getState(tgID)
-		st.step = stepAwaitPurchaseTitle
-		st.dealID = dealID
-		h.editText(chatID, msgID, "Введите название покупки:")
-
-	case strings.HasPrefix(data, "purchases:"):
-		dealID := strings.TrimPrefix(data, "purchases:")
-		h.showPurchases(chatID, msgID, dealID)
-
-	case strings.HasPrefix(data, "calculate:"):
-		dealID := strings.TrimPrefix(data, "calculate:")
-		h.showCalculation(chatID, msgID, dealID)
-
-	// Deal-level coverages management screen
-	// "deal_coverages:{dealID}" → max 15+36=51 chars ✓
-	case strings.HasPrefix(data, "deal_coverages:"):
-		dealID := strings.TrimPrefix(data, "deal_coverages:")
-		st := h.getState(tgID)
-		st.dealID = dealID
-		h.showDealCoverageMenu(chatID, msgID, dealID)
-
-	// Start adding a coverage: load participants into state, show payer keyboard
-	// "deal_cov_add" → 12 chars ✓ (dealID already in state)
-	case data == "deal_cov_add":
-		st := h.getState(tgID)
-		if st.dealID == "" {
-			h.editText(chatID, msgID, "Сессия устарела. Начните заново.")
-			return
-		}
-		deal, err := h.client.GetDeal(ctx, st.dealID)
-		if err != nil {
-			h.editText(chatID, msgID, "Ошибка при загрузке сделки.")
-			return
-		}
-		participants, err := h.fetchUsers(ctx, deal.ParticipantIds)
-		if err != nil {
-			h.editText(chatID, msgID, "Ошибка при загрузке участников.")
-			return
-		}
-		for _, p := range participants {
-			st.participantNames[p.Id] = p.Name
-		}
-		st.step = stepDealCovSelectPayer
-		h.showDealCovPayerKeyboard(chatID, msgID, participants)
-
-	// Coverage payer selected → "deal_cov_payer:{payerID}" → 15+36=51 chars ✓
-	case strings.HasPrefix(data, "deal_cov_payer:"):
-		payerID := strings.TrimPrefix(data, "deal_cov_payer:")
-		st := h.getState(tgID)
-		st.pendingCovPayerID = payerID
-		st.step = stepDealCovSelectCovered
-		h.showDealCovCoveredKeyboard(chatID, msgID, st)
-
-	// Covered person selected → "deal_cov_covered:{coveredID}" → 17+36=53 chars ✓
-	case strings.HasPrefix(data, "deal_cov_covered:"):
-		coveredID := strings.TrimPrefix(data, "deal_cov_covered:")
-		st := h.getState(tgID)
-		if st.dealID == "" {
-			h.editText(chatID, msgID, "Сессия устарела. Начните заново.")
-			return
-		}
-		if _, err := h.client.SetDealCoverage(ctx, st.dealID, st.pendingCovPayerID, coveredID); err != nil {
-			h.editText(chatID, msgID, "Ошибка при сохранении покрытия.")
-			return
-		}
-		dealID := st.dealID
-		st.step = stepIdle
-		st.pendingCovPayerID = ""
-		h.showDealCoverageMenu(chatID, msgID, dealID)
-
-	// Back to coverage menu (from payer selection)
-	case data == "deal_cov_back":
-		st := h.getState(tgID)
-		if st.dealID == "" {
-			h.showMainMenu(chatID, msgID, "Главное меню:")
-			return
-		}
-		st.step = stepIdle
-		h.showDealCoverageMenu(chatID, msgID, st.dealID)
-
-	// Remove a coverage → "deal_cov_remove:{coveredID}" → 16+36=52 chars ✓
-	case strings.HasPrefix(data, "deal_cov_remove:"):
-		coveredID := strings.TrimPrefix(data, "deal_cov_remove:")
-		st := h.getState(tgID)
-		if st.dealID == "" {
-			h.editText(chatID, msgID, "Сессия устарела. Начните заново.")
-			return
-		}
-		if _, err := h.client.RemoveDealCoverage(ctx, st.dealID, coveredID); err != nil {
-			h.editText(chatID, msgID, "Ошибка при удалении покрытия.")
-			return
-		}
-		h.showDealCoverageMenu(chatID, msgID, st.dealID)
-
-	// Payer selected → create purchase immediately
-	case strings.HasPrefix(data, "payer:"):
-		payerID := strings.TrimPrefix(data, "payer:")
-		st := h.getState(tgID)
-		if st.step != stepAwaitPurchasePayer {
-			h.editText(chatID, msgID, "Сессия устарела. Начните заново.")
-			return
-		}
-		_, err := h.client.AddPurchase(ctx, st.dealID, st.purchaseTitle, st.purchaseAmt, payerID, "all", nil)
-		if err != nil {
-			h.editText(chatID, msgID, "Ошибка при добавлении покупки.")
-			return
-		}
-		dealID := st.dealID
-		title := st.purchaseTitle
-		h.resetState(tgID)
-		h.editText(chatID, msgID, fmt.Sprintf("✅ Покупка «%s» добавлена!", title))
-		h.showDealMenu(chatID, 0, dealID)
-	}
-}
-
 // --- UI screens ---
 
 func (h *Handler) showMainMenu(chatID int64, msgID int, text string) {
@@ -346,14 +90,14 @@ func (h *Handler) showMainMenu(chatID int64, msgID int, text string) {
 			tgbotapi.NewInlineKeyboardButtonData("📋 Мои сделки", "my_deals"),
 		),
 	)
-	h.sendOrEdit(chatID, msgID, text, &kb)
+	sendOrEdit(h.api, chatID, msgID, text, &kb)
 }
 
 func (h *Handler) showDealsList(chatID int64, msgID int, userID string) {
 	ctx := context.Background()
 	deals, err := h.client.ListUserDeals(ctx, userID)
 	if err != nil {
-		h.editText(chatID, msgID, "Ошибка при загрузке сделок.")
+		editText(h.api, chatID, msgID, "Ошибка при загрузке сделок.", nil)
 		return
 	}
 
@@ -364,7 +108,7 @@ func (h *Handler) showDealsList(chatID int64, msgID int, userID string) {
 			tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("📦 Создать сделку", "new_deal")),
 			back,
 		)
-		h.sendOrEdit(chatID, msgID, "У вас пока нет сделок.", &kb)
+		sendOrEdit(h.api, chatID, msgID, "У вас пока нет сделок.", &kb)
 		return
 	}
 
@@ -377,14 +121,14 @@ func (h *Handler) showDealsList(chatID int64, msgID int, userID string) {
 	}
 	rows = append(rows, back)
 	kb := tgbotapi.NewInlineKeyboardMarkup(rows...)
-	h.sendOrEdit(chatID, msgID, "Ваши сделки:", &kb)
+	sendOrEdit(h.api, chatID, msgID, "Ваши сделки:", &kb)
 }
 
 func (h *Handler) showDealMenu(chatID int64, msgID int, dealID string) {
 	ctx := context.Background()
 	deal, err := h.client.GetDeal(ctx, dealID)
 	if err != nil {
-		h.send(chatID, "Ошибка при загрузке сделки.")
+		send(h.api, chatID, "Ошибка при загрузке сделки.", nil)
 		return
 	}
 	covCount := len(deal.Coverages)
@@ -409,14 +153,14 @@ func (h *Handler) showDealMenu(chatID int64, msgID int, dealID string) {
 			tgbotapi.NewInlineKeyboardButtonData("← К сделкам", "my_deals"),
 		),
 	)
-	h.sendOrEdit(chatID, msgID, text, &kb)
+	sendOrEdit(h.api, chatID, msgID, text, &kb)
 }
 
 func (h *Handler) showDealCoverageMenu(chatID int64, msgID int, dealID string) {
 	ctx := context.Background()
 	deal, err := h.client.GetDeal(ctx, dealID)
 	if err != nil {
-		h.editText(chatID, msgID, "Ошибка при загрузке сделки.")
+		editText(h.api, chatID, msgID, "Ошибка при загрузке сделки.", nil)
 		return
 	}
 
@@ -452,7 +196,7 @@ func (h *Handler) showDealCoverageMenu(chatID int64, msgID int, dealID string) {
 		),
 	)
 	kb := tgbotapi.NewInlineKeyboardMarkup(rows...)
-	h.sendOrEdit(chatID, msgID, sb.String(), &kb)
+	sendOrEdit(h.api, chatID, msgID, sb.String(), &kb)
 }
 
 func (h *Handler) showDealCovPayerKeyboard(chatID int64, msgID int, participants []*pb.User) {
@@ -467,7 +211,7 @@ func (h *Handler) showDealCovPayerKeyboard(chatID int64, msgID int, participants
 		tgbotapi.NewInlineKeyboardButtonData("← Назад", "deal_cov_back"),
 	))
 	kb := tgbotapi.NewInlineKeyboardMarkup(rows...)
-	h.sendOrEdit(chatID, msgID, "Кто платит за другого?", &kb)
+	sendOrEdit(h.api, chatID, msgID, "Кто платит за другого?", &kb)
 }
 
 func (h *Handler) showDealCovCoveredKeyboard(chatID int64, msgID int, st *userState) {
@@ -486,14 +230,14 @@ func (h *Handler) showDealCovCoveredKeyboard(chatID int64, msgID int, st *userSt
 		tgbotapi.NewInlineKeyboardButtonData("← Назад", "deal_cov_add"),
 	))
 	kb := tgbotapi.NewInlineKeyboardMarkup(rows...)
-	h.sendOrEdit(chatID, msgID, fmt.Sprintf("За кого платит %s?", payerName), &kb)
+	sendOrEdit(h.api, chatID, msgID, fmt.Sprintf("За кого платит %s?", payerName), &kb)
 }
 
 func (h *Handler) showPurchases(chatID int64, msgID int, dealID string) {
 	ctx := context.Background()
 	purchases, err := h.client.ListDealPurchases(ctx, dealID)
 	if err != nil {
-		h.editText(chatID, msgID, "Ошибка при загрузке покупок.")
+		editText(h.api, chatID, msgID, "Ошибка при загрузке покупок.", nil)
 		return
 	}
 
@@ -502,7 +246,7 @@ func (h *Handler) showPurchases(chatID int64, msgID int, dealID string) {
 	)
 
 	if len(purchases) == 0 {
-		h.sendOrEdit(chatID, msgID, "Покупок пока нет.", &back)
+		sendOrEdit(h.api, chatID, msgID, "Покупок пока нет.", &back)
 		return
 	}
 
@@ -516,14 +260,14 @@ func (h *Handler) showPurchases(chatID int64, msgID int, dealID string) {
 		total += p.Amount
 	}
 	sb.WriteString(fmt.Sprintf("\nИтого: %s ₽", formatAmount(total)))
-	h.sendOrEdit(chatID, msgID, sb.String(), &back)
+	sendOrEdit(h.api, chatID, msgID, sb.String(), &back)
 }
 
 func (h *Handler) showCalculation(chatID int64, msgID int, dealID string) {
 	ctx := context.Background()
 	result, err := h.client.CalculateDebts(ctx, dealID)
 	if err != nil {
-		h.editText(chatID, msgID, "Ошибка при расчёте.")
+		editText(h.api, chatID, msgID, "Ошибка при расчёте.", nil)
 		return
 	}
 
@@ -532,7 +276,7 @@ func (h *Handler) showCalculation(chatID int64, msgID int, dealID string) {
 	)
 
 	if len(result.Debts) == 0 {
-		h.sendOrEdit(chatID, msgID, "✅ Все в расчёте, долгов нет!", &back)
+		sendOrEdit(h.api, chatID, msgID, "✅ Все в расчёте, долгов нет!", &back)
 		return
 	}
 
@@ -544,7 +288,7 @@ func (h *Handler) showCalculation(chatID int64, msgID int, dealID string) {
 		to := h.resolveUserName(ctx, d.ToUserId, names)
 		sb.WriteString(fmt.Sprintf("• %s → %s: %s ₽\n", from, to, formatAmount(d.Amount)))
 	}
-	h.sendOrEdit(chatID, msgID, sb.String(), &back)
+	sendOrEdit(h.api, chatID, msgID, sb.String(), &back)
 }
 
 func (h *Handler) sendPayerKeyboard(chatID int64, participants []*pb.User) {
@@ -558,167 +302,4 @@ func (h *Handler) sendPayerKeyboard(chatID int64, participants []*pb.User) {
 	msg := tgbotapi.NewMessage(chatID, "Кто оплатил?")
 	msg.ReplyMarkup = kb
 	h.api.Send(msg)
-}
-
-// --- Low-level send helpers ---
-
-func (h *Handler) send(chatID int64, text string) {
-	h.api.Send(tgbotapi.NewMessage(chatID, text))
-}
-
-func (h *Handler) editText(chatID int64, msgID int, text string) {
-	h.api.Send(tgbotapi.NewEditMessageText(chatID, msgID, text))
-}
-
-func (h *Handler) sendOrEdit(chatID int64, msgID int, text string, kb *tgbotapi.InlineKeyboardMarkup) {
-	if msgID != 0 {
-		edit := tgbotapi.NewEditMessageText(chatID, msgID, text)
-		edit.ReplyMarkup = kb
-		h.api.Send(edit)
-	} else {
-		msg := tgbotapi.NewMessage(chatID, text)
-		msg.ReplyMarkup = kb
-		h.api.Send(msg)
-	}
-}
-
-// --- User helpers ---
-
-func (h *Handler) resolveUser(ctx context.Context, from *tgbotapi.User) *pb.User {
-	name := strings.TrimSpace(from.FirstName + " " + from.LastName)
-	if name == "" {
-		name = from.UserName
-	}
-	user, _, err := h.client.ResolveOrCreateUser(ctx, platform, strconv.FormatInt(from.ID, 10), name, from.UserName)
-	if err != nil {
-		return nil
-	}
-	return user
-}
-
-func (h *Handler) resolveUserFromCB(ctx context.Context, from *tgbotapi.User) *pb.User {
-	return h.resolveUser(ctx, from)
-}
-
-// resolveParticipant determines how to add a participant based on the message:
-//   - Forwarded message (ForwardFrom set)  → link by Telegram ID
-//   - Privacy-protected forward (ForwardSenderName) → plain name
-//   - @username text                        → link by username (merge on first bot use)
-//   - Plain text                            → name only
-//
-// Returns the created/found user, an optional notice string, and an error.
-func (h *Handler) resolveParticipant(ctx context.Context, msg *tgbotapi.Message) (*pb.User, string, error) {
-	// Case 1: forwarded message with public sender info
-	if msg.ForwardFrom != nil {
-		from := msg.ForwardFrom
-		name := strings.TrimSpace(from.FirstName + " " + from.LastName)
-		if name == "" {
-			name = from.UserName
-		}
-		user, _, err := h.client.ResolveOrCreateUser(ctx, platform, strconv.FormatInt(from.ID, 10), name, from.UserName)
-		if err != nil {
-			return nil, "", err
-		}
-		return user, " Telegram-аккаунт привязан.", nil
-	}
-
-	// Case 2: forwarded message but sender hid their identity
-	if msg.ForwardSenderName != "" {
-		user, err := h.client.CreateUser(ctx, msg.ForwardSenderName)
-		if err != nil {
-			return nil, "", err
-		}
-		return user, " (аккаунт скрыт настройками приватности)", nil
-	}
-
-	text := strings.TrimSpace(msg.Text)
-
-	// Case 3: @username text
-	if strings.HasPrefix(text, "@") {
-		username := strings.TrimPrefix(text, "@")
-		if username == "" {
-			h.send(msg.Chat.ID, "Укажите username после @.")
-			return nil, "", nil
-		}
-		user, _, err := h.client.ResolveOrCreateUser(ctx, "telegram_username", username, "@"+username, "")
-		if err != nil {
-			return nil, "", err
-		}
-		return user, " Когда откроет бота — аккаунты свяжутся автоматически.", nil
-	}
-
-	// Case 4: plain name
-	if text == "" {
-		h.send(msg.Chat.ID, "Введите имя, @username или перешлите сообщение.")
-		return nil, "", nil
-	}
-	user, err := h.client.CreateUser(ctx, text)
-	if err != nil {
-		return nil, "", err
-	}
-	return user, "", nil
-}
-
-func (h *Handler) fetchUsers(ctx context.Context, ids []string) ([]*pb.User, error) {
-	users := make([]*pb.User, 0, len(ids))
-	for _, id := range ids {
-		u, err := h.client.GetUser(ctx, id)
-		if err != nil {
-			return nil, err
-		}
-		users = append(users, u)
-	}
-	return users, nil
-}
-
-func (h *Handler) resolveUserName(ctx context.Context, userID string, cache map[string]string) string {
-	if name, ok := cache[userID]; ok {
-		return name
-	}
-	u, err := h.client.GetUser(ctx, userID)
-	if err != nil {
-		return "?"
-	}
-	cache[userID] = u.Name
-	return u.Name
-}
-
-// --- Amount helpers ---
-
-// parseAmount parses a ruble amount like "150", "99.50", "99,50" into kopecks.
-func parseAmount(s string) (int64, error) {
-	s = strings.TrimSpace(s)
-	s = strings.ReplaceAll(s, ",", ".")
-	parts := strings.SplitN(s, ".", 2)
-
-	rubles, err := strconv.ParseInt(parts[0], 10, 64)
-	if err != nil || rubles < 0 {
-		return 0, fmt.Errorf("invalid amount")
-	}
-
-	kopecks := int64(0)
-	if len(parts) == 2 && parts[1] != "" {
-		kStr := parts[1]
-		switch len(kStr) {
-		case 1:
-			kStr += "0"
-		default:
-			kStr = kStr[:2]
-		}
-		kopecks, err = strconv.ParseInt(kStr, 10, 64)
-		if err != nil {
-			return 0, fmt.Errorf("invalid kopecks")
-		}
-	}
-	return rubles*100 + kopecks, nil
-}
-
-// formatAmount converts kopecks to a human-readable ruble string.
-func formatAmount(kopecks int64) string {
-	r := kopecks / 100
-	k := kopecks % 100
-	if k == 0 {
-		return fmt.Sprintf("%d", r)
-	}
-	return fmt.Sprintf("%d.%02d", r, k)
 }
