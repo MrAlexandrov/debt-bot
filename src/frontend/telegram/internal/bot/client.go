@@ -10,6 +10,23 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
+// DebtClient is the interface the bot handler uses to communicate with the backend.
+// The concrete *Client satisfies this interface.
+type DebtClient interface {
+	CreateUser(ctx context.Context, name string) (*pb.User, error)
+	ResolveOrCreateUser(ctx context.Context, platform, externalID, name, username string) (*pb.User, bool, error)
+	GetUser(ctx context.Context, userID string) (*pb.User, error)
+	CreateDeal(ctx context.Context, title, createdBy string) (*pb.Deal, error)
+	GetDeal(ctx context.Context, dealID string) (*pb.Deal, error)
+	ListUserDeals(ctx context.Context, userID string) ([]*pb.Deal, error)
+	AddDealParticipant(ctx context.Context, dealID, userID string) (*pb.Deal, error)
+	SetDealCoverage(ctx context.Context, dealID, payerID, coveredID string) (*pb.Deal, error)
+	RemoveDealCoverage(ctx context.Context, dealID, coveredID string) (*pb.Deal, error)
+	AddPurchase(ctx context.Context, dealID, title string, amount int64, paidBy, splitMode string, participantIDs []string) (*pb.Purchase, error)
+	ListDealPurchases(ctx context.Context, dealID string) ([]*pb.Purchase, error)
+	CalculateDebts(ctx context.Context, dealID string) (*pb.CalculateDebtsResponse, error)
+}
+
 type Client struct {
 	conn pb.DebtServiceClient
 }

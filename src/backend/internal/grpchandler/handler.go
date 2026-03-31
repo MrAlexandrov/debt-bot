@@ -6,19 +6,43 @@ import (
 
 	pb "github.com/mralexandrov/debt-bot/backend/gen/debt/v1"
 	"github.com/mralexandrov/debt-bot/backend/internal/domain"
-	"github.com/mralexandrov/debt-bot/backend/internal/service"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-type Handler struct {
-	pb.UnimplementedDebtServiceServer
-	users *service.UserService
-	deals *service.DealService
-	debts *service.DebtService
+// UserService describes the user-management operations required by this handler.
+type UserService interface {
+	Create(ctx context.Context, name string) (*domain.User, error)
+	ResolveOrCreate(ctx context.Context, platform, externalID, name, username string) (*domain.User, bool, error)
+	GetByID(ctx context.Context, id string) (*domain.User, error)
+	Update(ctx context.Context, id, name string) (*domain.User, error)
 }
 
-func New(users *service.UserService, deals *service.DealService, debts *service.DebtService) *Handler {
+// DealService describes the deal-management operations required by this handler.
+type DealService interface {
+	Create(ctx context.Context, title, createdBy string) (*domain.Deal, error)
+	GetByID(ctx context.Context, id string) (*domain.Deal, error)
+	ListByUserID(ctx context.Context, userID string) ([]*domain.Deal, error)
+	AddParticipant(ctx context.Context, dealID, userID string) (*domain.Deal, error)
+	SetCoverage(ctx context.Context, dealID, payerID, coveredID string) (*domain.Deal, error)
+	RemoveCoverage(ctx context.Context, dealID, coveredID string) (*domain.Deal, error)
+	AddPurchase(ctx context.Context, dealID, title string, amount int64, paidBy, splitMode string, participantIDs []string) (*domain.Purchase, error)
+	ListPurchases(ctx context.Context, dealID string) ([]*domain.Purchase, error)
+}
+
+// DebtService describes the debt-calculation operations required by this handler.
+type DebtService interface {
+	Calculate(ctx context.Context, dealID string) (*domain.CalculationResult, error)
+}
+
+type Handler struct {
+	pb.UnimplementedDebtServiceServer
+	users UserService
+	deals DealService
+	debts DebtService
+}
+
+func New(users UserService, deals DealService, debts DebtService) *Handler {
 	return &Handler{users: users, deals: deals, debts: debts}
 }
 

@@ -11,6 +11,37 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 )
 
+// StateManager manages per-user FSM state.
+// The default implementation is in-memory; swap for a persistent backend as needed.
+type StateManager interface {
+	Get(userID int64) *userState
+	Reset(userID int64)
+}
+
+type inMemoryStateManager struct {
+	mu     sync.Mutex
+	states map[int64]*userState
+}
+
+func newInMemoryStateManager() *inMemoryStateManager {
+	return &inMemoryStateManager{states: make(map[int64]*userState)}
+}
+
+func (m *inMemoryStateManager) Get(userID int64) *userState {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.states[userID]; !ok {
+		m.states[userID] = &userState{participantNames: make(map[string]string)}
+	}
+	return m.states[userID]
+}
+
+func (m *inMemoryStateManager) Reset(userID int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.states[userID] = &userState{participantNames: make(map[string]string)}
+}
+
 const platform = "telegram"
 
 // FSM steps
@@ -38,16 +69,15 @@ type userState struct {
 
 type Handler struct {
 	api    *tgbotapi.BotAPI
-	client *Client
-	mu     sync.Mutex
-	states map[int64]*userState
+	client DebtClient
+	sm     StateManager
 }
 
-func NewHandler(api *tgbotapi.BotAPI, client *Client) *Handler {
+func NewHandler(api *tgbotapi.BotAPI, client DebtClient) *Handler {
 	return &Handler{
 		api:    api,
 		client: client,
-		states: make(map[int64]*userState),
+		sm:     newInMemoryStateManager(),
 	}
 }
 
@@ -89,21 +119,19 @@ func (h *Handler) dispatchCallback(cb *tgbotapi.CallbackQuery) {
 	h.handleCallback(ctx, cb)
 }
 
-// --- State helpers ---
+// --- Navigation helpers ---
+// These helpers combine FSM state reset with screen rendering, so every
+// "navigate to X" transition is expressed in one place regardless of where
+// it is triggered (back button, forward flow, deep link, etc.).
 
-func (h *Handler) getState(userID int64) *userState {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if _, ok := h.states[userID]; !ok {
-		h.states[userID] = &userState{participantNames: make(map[string]string)}
-	}
-	return h.states[userID]
+func (h *Handler) navigateToMainMenu(ctx context.Context, tgID, chatID int64, msgID int) {
+	h.sm.Reset(tgID)
+	h.showMainMenu(ctx, chatID, msgID, "Главное меню:")
 }
 
-func (h *Handler) resetState(ctx context.Context, userID int64) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.states[userID] = &userState{participantNames: make(map[string]string)}
+func (h *Handler) navigateToDeal(ctx context.Context, tgID, chatID int64, msgID int, dealID string) {
+	h.sm.Reset(tgID)
+	h.showDealMenu(ctx, chatID, msgID, dealID)
 }
 
 // --- UI screens ---
@@ -210,8 +238,8 @@ func (h *Handler) showDealCoverageMenu(ctx context.Context, chatID int64, msgID 
 	} else {
 		sb.WriteString("\nТекущие покрытия:\n")
 		for _, cov := range deal.Coverages {
-			payer := h.resolveUserName(ctx, cov.PayerId, names)
-			covered := h.resolveUserName(ctx, cov.CoveredId, names)
+			payer := resolveUserName(ctx, h.client, cov.PayerId, names)
+			covered := resolveUserName(ctx, h.client, cov.CoveredId, names)
 			fmt.Fprintf(&sb, "• %s платит за %s\n", payer, covered)
 			removeLabel := fmt.Sprintf("❌ %s→%s", payer, covered)
 			rows = append(rows, tgbotapi.NewInlineKeyboardRow(
@@ -297,7 +325,7 @@ func (h *Handler) showPurchases(ctx context.Context, chatID int64, msgID int, de
 	sb.WriteString("Покупки:\n\n")
 	var total int64
 	for _, p := range purchases {
-		payerName := h.resolveUserName(ctx, p.PaidBy, names)
+		payerName := resolveUserName(ctx, h.client, p.PaidBy, names)
 		fmt.Fprintf(&sb, "• %s — %s ₽ (платил %s)\n", p.Title, formatAmount(p.Amount), payerName)
 		total += p.Amount
 	}
@@ -328,14 +356,17 @@ func (h *Handler) showCalculation(ctx context.Context, chatID int64, msgID int, 
 	var sb strings.Builder
 	sb.WriteString("Взаиморасчёты:\n\n")
 	for _, d := range result.Debts {
-		from := h.resolveUserName(ctx, d.FromUserId, names)
-		to := h.resolveUserName(ctx, d.ToUserId, names)
+		from := resolveUserName(ctx, h.client, d.FromUserId, names)
+		to := resolveUserName(ctx, h.client, d.ToUserId, names)
 		fmt.Fprintf(&sb, "• %s → %s: %s ₽\n", from, to, formatAmount(d.Amount))
 	}
 	sendOrEdit(ctx, h.api, chatID, msgID, sb.String(), &back)
 }
 
-func (h *Handler) sendPayerKeyboard(chatID int64, participants []*pb.User) {
+func (h *Handler) showPayerKeyboard(ctx context.Context, chatID int64, msgID int, participants []*pb.User) {
+	ctx, span := tracer.Start(ctx, "showPayerKeyboard")
+	defer span.End()
+
 	var rows [][]tgbotapi.InlineKeyboardButton
 	for _, p := range participants {
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
@@ -343,7 +374,5 @@ func (h *Handler) sendPayerKeyboard(chatID int64, participants []*pb.User) {
 		))
 	}
 	kb := tgbotapi.NewInlineKeyboardMarkup(rows...)
-	msg := tgbotapi.NewMessage(chatID, "Кто оплатил?")
-	msg.ReplyMarkup = kb
-	h.api.Send(msg)
+	sendOrEdit(ctx, h.api, chatID, msgID, "Кто оплатил?", &kb)
 }

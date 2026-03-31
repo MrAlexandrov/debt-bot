@@ -14,7 +14,7 @@ import (
 
 var tracer = otel.Tracer("debt-bot-frontend")
 
-// --- User helpers ---
+// --- User helpers (Handler methods) ---
 
 func (h *Handler) resolveUser(ctx context.Context, from *tgbotapi.User) *pb.User {
 	ctx, span := tracer.Start(ctx, "resolveUser")
@@ -33,13 +33,6 @@ func (h *Handler) resolveUser(ctx context.Context, from *tgbotapi.User) *pb.User
 	}
 	slog.InfoContext(ctx, "user resolved", "tg_user_id", from.ID, "user_id", user.Id)
 	return user
-}
-
-func (h *Handler) resolveUserFromCB(ctx context.Context, from *tgbotapi.User) *pb.User {
-	ctx, span := tracer.Start(ctx, "resolveUserFromCB")
-	defer span.End()
-
-	return h.resolveUser(ctx, from)
 }
 
 // resolveParticipant determines how to add a participant based on the message:
@@ -116,7 +109,12 @@ func (h *Handler) resolveParticipant(ctx context.Context, msg *tgbotapi.Message)
 	return user, "", nil
 }
 
-func (h *Handler) fetchUsers(ctx context.Context, ids []string) ([]*pb.User, error) {
+// --- User utility functions ---
+// These are package-level functions (not Handler methods) because they only
+// depend on the DebtClient, not on any other Handler state.
+
+// fetchUsers fetches multiple users by ID in order.
+func fetchUsers(ctx context.Context, client DebtClient, ids []string) ([]*pb.User, error) {
 	ctx, span := tracer.Start(ctx, "fetchUsers")
 	defer span.End()
 
@@ -124,7 +122,7 @@ func (h *Handler) fetchUsers(ctx context.Context, ids []string) ([]*pb.User, err
 
 	users := make([]*pb.User, 0, len(ids))
 	for _, id := range ids {
-		u, err := h.client.GetUser(ctx, id)
+		u, err := client.GetUser(ctx, id)
 		if err != nil {
 			slog.ErrorContext(ctx, "fetchUsers: get user failed", "user_id", id, "error", err)
 			return nil, err
@@ -134,14 +132,15 @@ func (h *Handler) fetchUsers(ctx context.Context, ids []string) ([]*pb.User, err
 	return users, nil
 }
 
-func (h *Handler) resolveUserName(ctx context.Context, userID string, cache map[string]string) string {
+// resolveUserName returns a user's display name, using cache to avoid redundant lookups.
+func resolveUserName(ctx context.Context, client DebtClient, userID string, cache map[string]string) string {
 	ctx, span := tracer.Start(ctx, "resolveUserName")
 	defer span.End()
 
 	if name, ok := cache[userID]; ok {
 		return name
 	}
-	u, err := h.client.GetUser(ctx, userID)
+	u, err := client.GetUser(ctx, userID)
 	if err != nil {
 		slog.ErrorContext(ctx, "resolveUserName: get user failed", "user_id", userID, "error", err)
 		return "?"

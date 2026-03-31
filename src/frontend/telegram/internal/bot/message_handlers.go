@@ -18,7 +18,7 @@ func (h *Handler) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 	tgID := msg.From.ID
 
 	if msg.IsCommand() && msg.Command() == "start" {
-		h.resetState(ctx, tgID)
+		h.sm.Reset(tgID)
 		user := h.resolveUser(ctx, msg.From)
 		greeting := "Привет!"
 		if user != nil {
@@ -28,7 +28,7 @@ func (h *Handler) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 		return
 	}
 
-	st := h.getState(tgID)
+	st := h.sm.Get(tgID)
 	text := strings.TrimSpace(msg.Text)
 
 	if st.step != stepIdle {
@@ -50,7 +50,7 @@ func (h *Handler) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 			send(ctx, h.api, msg.Chat.ID, "Ошибка при создании сделки.", nil)
 			return
 		}
-		h.resetState(ctx, tgID)
+		h.sm.Reset(tgID)
 		send(ctx, h.api, msg.Chat.ID, fmt.Sprintf("✅ Сделка «%s» создана!", deal.Title), nil)
 		h.showDealMenu(ctx, msg.Chat.ID, 0, deal.Id)
 
@@ -68,7 +68,7 @@ func (h *Handler) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 			send(ctx, h.api, msg.Chat.ID, "Ошибка при добавлении в сделку.", nil)
 			return
 		}
-		h.resetState(ctx, tgID)
+		h.sm.Reset(tgID)
 		send(ctx, h.api, msg.Chat.ID, fmt.Sprintf("✅ %s добавлен.%s", newUser.Name, notice), nil)
 		h.showDealMenu(ctx, msg.Chat.ID, 0, dealID)
 
@@ -95,7 +95,7 @@ func (h *Handler) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 			send(ctx, h.api, msg.Chat.ID, "Ошибка при загрузке сделки.", nil)
 			return
 		}
-		participants, err := h.fetchUsers(ctx, deal.ParticipantIds)
+		participants, err := fetchUsers(ctx, h.client, deal.ParticipantIds)
 		if err != nil || len(participants) == 0 {
 			send(ctx, h.api, msg.Chat.ID, "Нет участников в сделке.", nil)
 			return
@@ -104,7 +104,7 @@ func (h *Handler) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 			st.participantNames[p.Id] = p.Name
 		}
 		st.step = stepAwaitPurchasePayer
-		h.sendPayerKeyboard(msg.Chat.ID, participants)
+		h.showPayerKeyboard(ctx, msg.Chat.ID, 0, participants)
 
 	case stepAwaitPurchasePayer:
 		send(ctx, h.api, msg.Chat.ID, "Выберите плательщика из кнопок выше.", nil)

@@ -25,7 +25,7 @@ func (h *Handler) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery
 	exactHandlers := map[string]func(){
 		"main_menu":     func() { h.handleMainMenu(ctx, tgID, chatID, msgID) },
 		"new_deal":      func() { h.handleNewDeal(ctx, tgID, chatID, msgID) },
-		"my_deals":      func() { h.handleMyDeals(ctx, tgID, chatID, msgID, cb) },
+		"my_deals":      func() { h.handleMyDeals(ctx, chatID, msgID, cb) },
 		"deal_cov_add":  func() { h.handleDealCoverageAdd(ctx, tgID, chatID, msgID) },
 		"deal_cov_back": func() { h.handleDealCoverageBack(ctx, tgID, chatID, msgID) },
 		"back":          func() { h.handleBack(ctx, tgID, chatID, msgID) },
@@ -66,24 +66,23 @@ func (h *Handler) handleMainMenu(ctx context.Context, tgID, chatID int64, msgID 
 	ctx, span := tracer.Start(ctx, "handleMainMenu")
 	defer span.End()
 
-	h.resetState(ctx, tgID)
-	h.showMainMenu(ctx, chatID, msgID, "Главное меню:")
+	h.navigateToMainMenu(ctx, tgID, chatID, msgID)
 }
 
 func (h *Handler) handleNewDeal(ctx context.Context, tgID, chatID int64, msgID int) {
 	ctx, span := tracer.Start(ctx, "handleNewDeal")
 	defer span.End()
 
-	h.getState(tgID).step = stepAwaitDealTitle
+	h.sm.Get(tgID).step = stepAwaitDealTitle
 	kb := backKeyboard()
 	editText(ctx, h.api, chatID, msgID, "Введите название сделки:", &kb)
 }
 
-func (h *Handler) handleMyDeals(ctx context.Context, _, chatID int64, msgID int, cb *tgbotapi.CallbackQuery) {
+func (h *Handler) handleMyDeals(ctx context.Context, chatID int64, msgID int, cb *tgbotapi.CallbackQuery) {
 	ctx, span := tracer.Start(ctx, "handleMyDeals")
 	defer span.End()
 
-	user := h.resolveUserFromCB(ctx, cb.From)
+	user := h.resolveUser(ctx, cb.From)
 	if user == nil {
 		return
 	}
@@ -95,8 +94,7 @@ func (h *Handler) handleDeal(ctx context.Context, tgID, chatID int64, msgID int,
 	defer span.End()
 
 	dealID := strings.TrimPrefix(cb.Data, "deal:")
-	h.resetState(ctx, tgID)
-	h.showDealMenu(ctx, chatID, msgID, dealID)
+	h.navigateToDeal(ctx, tgID, chatID, msgID, dealID)
 }
 
 func (h *Handler) handleAddParticipant(ctx context.Context, tgID, chatID int64, msgID int, cb *tgbotapi.CallbackQuery) {
@@ -104,7 +102,7 @@ func (h *Handler) handleAddParticipant(ctx context.Context, tgID, chatID int64, 
 	defer span.End()
 
 	dealID := strings.TrimPrefix(cb.Data, "add_participant:")
-	st := h.getState(tgID)
+	st := h.sm.Get(tgID)
 	st.step = stepAwaitParticipantName
 	st.dealID = dealID
 	kb := backKeyboard()
@@ -116,7 +114,7 @@ func (h *Handler) handleAddPurchase(ctx context.Context, tgID, chatID int64, msg
 	defer span.End()
 
 	dealID := strings.TrimPrefix(cb.Data, "add_purchase:")
-	st := h.getState(tgID)
+	st := h.sm.Get(tgID)
 	st.step = stepAwaitPurchaseTitle
 	st.dealID = dealID
 	kb := backKeyboard()
@@ -146,7 +144,7 @@ func (h *Handler) handleDealCoverages(ctx context.Context, tgID, chatID int64, m
 	defer span.End()
 
 	dealID := strings.TrimPrefix(cb.Data, "deal_coverages:")
-	st := h.getState(tgID)
+	st := h.sm.Get(tgID)
 	st.dealID = dealID
 	h.showDealCoverageMenu(ctx, chatID, msgID, dealID)
 }
@@ -157,7 +155,7 @@ func (h *Handler) handleDealCoverageAdd(ctx context.Context, tgID, chatID int64,
 	ctx, span := tracer.Start(ctx, "handleDealCoverageAdd")
 	defer span.End()
 
-	st := h.getState(tgID)
+	st := h.sm.Get(tgID)
 	if st.dealID == "" {
 		editText(ctx, h.api, chatID, msgID, "Сессия устарела. Начните заново.", nil)
 		return
@@ -167,7 +165,7 @@ func (h *Handler) handleDealCoverageAdd(ctx context.Context, tgID, chatID int64,
 		editText(ctx, h.api, chatID, msgID, "Ошибка при загрузке сделки.", nil)
 		return
 	}
-	participants, err := h.fetchUsers(ctx, deal.ParticipantIds)
+	participants, err := fetchUsers(ctx, h.client, deal.ParticipantIds)
 	if err != nil {
 		editText(ctx, h.api, chatID, msgID, "Ошибка при загрузке участников.", nil)
 		return
@@ -185,7 +183,7 @@ func (h *Handler) handleDealCoveragePayer(ctx context.Context, tgID, chatID int6
 	defer span.End()
 
 	payerID := strings.TrimPrefix(cb.Data, "deal_cov_payer:")
-	st := h.getState(tgID)
+	st := h.sm.Get(tgID)
 	st.pendingCovPayerID = payerID
 	st.step = stepDealCovSelectCovered
 	h.showDealCovCoveredKeyboard(ctx, chatID, msgID, st)
@@ -197,7 +195,7 @@ func (h *Handler) handleDealCoverageCovered(ctx context.Context, tgID, chatID in
 	defer span.End()
 
 	coveredID := strings.TrimPrefix(cb.Data, "deal_cov_covered:")
-	st := h.getState(tgID)
+	st := h.sm.Get(tgID)
 	if st.dealID == "" {
 		editText(ctx, h.api, chatID, msgID, "Сессия устарела. Начните заново.", nil)
 		return
@@ -217,9 +215,9 @@ func (h *Handler) handleDealCoverageBack(ctx context.Context, tgID, chatID int64
 	ctx, span := tracer.Start(ctx, "handleDealCoverageBack")
 	defer span.End()
 
-	st := h.getState(tgID)
+	st := h.sm.Get(tgID)
 	if st.dealID == "" {
-		h.showMainMenu(ctx, chatID, msgID, "Главное меню:")
+		h.navigateToMainMenu(ctx, tgID, chatID, msgID)
 		return
 	}
 	st.step = stepIdle
@@ -232,7 +230,7 @@ func (h *Handler) handleDealCoverageRemove(ctx context.Context, tgID, chatID int
 	defer span.End()
 
 	coveredID := strings.TrimPrefix(cb.Data, "deal_cov_remove:")
-	st := h.getState(tgID)
+	st := h.sm.Get(tgID)
 	if st.dealID == "" {
 		editText(ctx, h.api, chatID, msgID, "Сессия устарела. Начните заново.", nil)
 		return
@@ -250,7 +248,7 @@ func (h *Handler) handleCreatePurchase(ctx context.Context, tgID, chatID int64, 
 	defer span.End()
 
 	payerID := strings.TrimPrefix(cb.Data, "payer:")
-	st := h.getState(tgID)
+	st := h.sm.Get(tgID)
 	if st.step != stepAwaitPurchasePayer {
 		editText(ctx, h.api, chatID, msgID, "Сессия устарела. Начните заново.", nil)
 		return
@@ -262,7 +260,7 @@ func (h *Handler) handleCreatePurchase(ctx context.Context, tgID, chatID int64, 
 	}
 	dealID := st.dealID
 	title := st.purchaseTitle
-	h.resetState(ctx, tgID)
+	h.sm.Reset(tgID)
 	editText(ctx, h.api, chatID, msgID, fmt.Sprintf("✅ Покупка «%s» добавлена!", title), nil)
 	h.showDealMenu(ctx, chatID, 0, dealID)
 }
@@ -271,17 +269,14 @@ func (h *Handler) handleBack(ctx context.Context, tgID, chatID int64, msgID int)
 	ctx, span := tracer.Start(ctx, "handleBack")
 	defer span.End()
 
-	st := h.getState(tgID)
+	st := h.sm.Get(tgID)
 	dealID := st.dealID
 	switch st.step {
 	case stepAwaitDealTitle:
-		h.resetState(ctx, tgID)
-		h.showMainMenu(ctx, chatID, msgID, "Главное меню:")
+		h.navigateToMainMenu(ctx, tgID, chatID, msgID)
 	case stepAwaitParticipantName, stepAwaitPurchaseTitle, stepAwaitPurchaseAmount, stepAwaitPurchasePayer:
-		h.resetState(ctx, tgID)
-		h.showDealMenu(ctx, chatID, msgID, dealID)
+		h.navigateToDeal(ctx, tgID, chatID, msgID, dealID)
 	default:
-		h.resetState(ctx, tgID)
-		h.showMainMenu(ctx, chatID, msgID, "Главное меню:")
+		h.navigateToMainMenu(ctx, tgID, chatID, msgID)
 	}
 }
