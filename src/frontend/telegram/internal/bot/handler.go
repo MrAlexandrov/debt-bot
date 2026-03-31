@@ -178,7 +178,7 @@ func (h *Handler) showDealCoverageMenu(chatID int64, msgID int, dealID string) {
 		for _, cov := range deal.Coverages {
 			payer := h.resolveUserName(ctx, cov.PayerId, names)
 			covered := h.resolveUserName(ctx, cov.CoveredId, names)
-			sb.WriteString(fmt.Sprintf("• %s платит за %s\n", payer, covered))
+			fmt.Fprintf(&sb, "• %s платит за %s\n", payer, covered)
 			removeLabel := fmt.Sprintf("❌ %s→%s", payer, covered)
 			rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 				// "deal_cov_remove:{coveredID}" → 16+36=52 chars ✓
@@ -256,10 +256,10 @@ func (h *Handler) showPurchases(chatID int64, msgID int, dealID string) {
 	var total int64
 	for _, p := range purchases {
 		payerName := h.resolveUserName(ctx, p.PaidBy, names)
-		sb.WriteString(fmt.Sprintf("• %s — %s ₽ (платил %s)\n", p.Title, formatAmount(p.Amount), payerName))
+		fmt.Fprintf(&sb, "• %s — %s ₽ (платил %s)\n", p.Title, formatAmount(p.Amount), payerName)
 		total += p.Amount
 	}
-	sb.WriteString(fmt.Sprintf("\nИтого: %s ₽", formatAmount(total)))
+	fmt.Fprintf(&sb, "\nИтого: %s ₽", formatAmount(total))
 	sendOrEdit(h.api, chatID, msgID, sb.String(), &back)
 }
 
@@ -286,7 +286,7 @@ func (h *Handler) showCalculation(chatID int64, msgID int, dealID string) {
 	for _, d := range result.Debts {
 		from := h.resolveUserName(ctx, d.FromUserId, names)
 		to := h.resolveUserName(ctx, d.ToUserId, names)
-		sb.WriteString(fmt.Sprintf("• %s → %s: %s ₽\n", from, to, formatAmount(d.Amount)))
+		fmt.Fprintf(&sb, "• %s → %s: %s ₽\n", from, to, formatAmount(d.Amount))
 	}
 	sendOrEdit(h.api, chatID, msgID, sb.String(), &back)
 }

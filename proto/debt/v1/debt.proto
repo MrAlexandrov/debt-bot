@@ -50,30 +50,30 @@ message Purchase {
   string id = 1;
   string deal_id = 2;
   string title = 3;
-  int64 amount = 4;  // in kopecks
+  int64 amount = 4; // in kopecks
   string paid_by = 5;
-  string split_mode = 6;  // "all" | "custom"
+  string split_mode = 6; // "all" | "custom"
   repeated string participant_ids = 7;
 }
 
 message Coverage {
-  string payer_id   = 1;  // who covers
-  string covered_id = 2;  // whose share is covered
+  string payer_id   = 1; // who covers
+  string covered_id = 2; // whose share is covered
 }
 
 message DebtItem {
   string from_user_id = 1;
   string to_user_id = 2;
-  int64 amount = 3;  // in kopecks
+  int64 amount = 3; // in kopecks
 }
 
 // --- ResolveOrCreateUser ---
 
 message ResolveOrCreateUserRequest {
-  string platform = 1;     // e.g. "telegram" or "telegram_username"
-  string external_id = 2;  // Telegram user_id or username (without @)
-  string name = 3;         // display name (used only on creation)
-  string username = 4;     // Telegram @username (optional, used for account merging)
+  string platform = 1; // e.g. "telegram" or "telegram_username"
+  string external_id = 2; // Telegram user_id or username (without @)
+  string name = 3; // display name (used only on creation)
+  string username = 4; // Telegram @username (optional, used for account merging)
 }
 
 message ResolveOrCreateUserResponse {
@@ -116,7 +116,7 @@ message UpdateUserResponse {
 
 message CreateDealRequest {
   string title = 1;
-  string created_by = 2;  // internal user_id
+  string created_by = 2; // internal user_id
 }
 
 message CreateDealResponse {
@@ -158,8 +158,8 @@ message AddDealParticipantResponse {
 
 message SetDealCoverageRequest {
   string deal_id    = 1;
-  string payer_id   = 2;  // who pays
-  string covered_id = 3;  // whose share is covered
+  string payer_id   = 2; // who pays
+  string covered_id = 3; // whose share is covered
 }
 
 message SetDealCoverageResponse {
@@ -182,10 +182,10 @@ message RemoveDealCoverageResponse {
 message AddPurchaseRequest {
   string deal_id = 1;
   string title = 2;
-  int64 amount = 3;  // in kopecks
+  int64 amount = 3; // in kopecks
   string paid_by = 4;
-  string split_mode = 5;  // "all" | "custom"
-  repeated string participant_ids = 6;  // used when split_mode="custom"
+  string split_mode = 5; // "all" | "custom"
+  repeated string participant_ids = 6; // used when split_mode="custom"
 }
 
 message AddPurchaseResponse {
@@ -210,5 +210,5 @@ message CalculateDebtsRequest {
 
 message CalculateDebtsResponse {
   repeated DebtItem debts = 1;
-  map<string, int64> balances = 2;  // user_id -> balance in kopecks
+  map<string, int64> balances = 2; // user_id -> balance in kopecks
 }
