@@ -70,7 +70,7 @@ func (h *Handler) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 		}
 		h.sm.Reset(tgID)
 		send(ctx, h.api, msg.Chat.ID, fmt.Sprintf("✅ %s добавлен.%s", newUser.Name, notice), nil)
-		h.showDealMenu(ctx, msg.Chat.ID, 0, dealID)
+		h.showParticipants(ctx, msg.Chat.ID, 0, dealID)
 
 	case stepAwaitPurchaseTitle:
 		if text == "" {

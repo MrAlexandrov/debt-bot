@@ -41,6 +41,7 @@ func (h *Handler) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery
 		handler func()
 	}{
 		{"deal:", func() { h.handleDeal(ctx, tgID, chatID, msgID, cb) }},
+		{"participants:", func() { h.handleParticipants(ctx, chatID, msgID, cb) }},
 		{"add_participant:", func() { h.handleAddParticipant(ctx, tgID, chatID, msgID, cb) }},
 		{"add_purchase:", func() { h.handleAddPurchase(ctx, tgID, chatID, msgID, cb) }},
 		{"purchases:", func() { h.handlePurchases(ctx, chatID, msgID, cb) }},
@@ -119,6 +120,14 @@ func (h *Handler) handleAddPurchase(ctx context.Context, tgID, chatID int64, msg
 	st.dealID = dealID
 	kb := backKeyboard()
 	editText(ctx, h.api, chatID, msgID, "Введите название покупки:", &kb)
+}
+
+func (h *Handler) handleParticipants(ctx context.Context, chatID int64, msgID int, cb *tgbotapi.CallbackQuery) {
+	ctx, span := tracer.Start(ctx, "handleParticipants")
+	defer span.End()
+
+	dealID := strings.TrimPrefix(cb.Data, "participants:")
+	h.showParticipants(ctx, chatID, msgID, dealID)
 }
 
 func (h *Handler) handlePurchases(ctx context.Context, chatID int64, msgID int, cb *tgbotapi.CallbackQuery) {
@@ -262,7 +271,7 @@ func (h *Handler) handleCreatePurchase(ctx context.Context, tgID, chatID int64, 
 	title := st.purchaseTitle
 	h.sm.Reset(tgID)
 	editText(ctx, h.api, chatID, msgID, fmt.Sprintf("✅ Покупка «%s» добавлена!", title), nil)
-	h.showDealMenu(ctx, chatID, 0, dealID)
+	h.showPurchases(ctx, chatID, 0, dealID)
 }
 
 func (h *Handler) handleBack(ctx context.Context, tgID, chatID int64, msgID int) {

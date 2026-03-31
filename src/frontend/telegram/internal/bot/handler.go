@@ -142,7 +142,6 @@ func (h *Handler) showMainMenu(ctx context.Context, chatID int64, msgID int, tex
 
 	kb := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("📦 Создать сделку", "new_deal"),
 			tgbotapi.NewInlineKeyboardButtonData("📋 Мои сделки", "my_deals"),
 		),
 	)
@@ -159,27 +158,24 @@ func (h *Handler) showDealsList(ctx context.Context, chatID int64, msgID int, us
 		return
 	}
 
-	back := tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("← Назад", "main_menu"))
-
-	if len(deals) == 0 {
-		kb := tgbotapi.NewInlineKeyboardMarkup(
-			tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("📦 Создать сделку", "new_deal")),
-			back,
-		)
-		sendOrEdit(ctx, h.api, chatID, msgID, "У вас пока нет сделок.", &kb)
-		return
-	}
-
 	var rows [][]tgbotapi.InlineKeyboardButton
+
+	text := "Ваши сделки:"
+	if len(deals) == 0 {
+		text = "У вас пока нет сделок."
+	}
 	for _, d := range deals {
 		label := fmt.Sprintf("📦 %s (%d чел.)", d.Title, len(d.ParticipantIds))
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(label, "deal:"+d.Id),
 		))
 	}
-	rows = append(rows, back)
+	rows = append(rows,
+		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("➕ Создать сделку", "new_deal")),
+		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("← Назад", "main_menu")),
+	)
 	kb := tgbotapi.NewInlineKeyboardMarkup(rows...)
-	sendOrEdit(ctx, h.api, chatID, msgID, "Ваши сделки:", &kb)
+	sendOrEdit(ctx, h.api, chatID, msgID, text, &kb)
 }
 
 func (h *Handler) showDealMenu(ctx context.Context, chatID int64, msgID int, dealID string) {
@@ -199,14 +195,11 @@ func (h *Handler) showDealMenu(ctx context.Context, chatID int64, msgID int, dea
 	text := fmt.Sprintf("📦 %s\nУчастников: %d", deal.Title, len(deal.ParticipantIds))
 	kb := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("👤 Добавить участника", "add_participant:"+dealID),
-			tgbotapi.NewInlineKeyboardButtonData("🛍 Добавить покупку", "add_purchase:"+dealID),
+			tgbotapi.NewInlineKeyboardButtonData("👤 Участники", "participants:"+dealID),
+			tgbotapi.NewInlineKeyboardButtonData("🛍 Покупки", "purchases:"+dealID),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("📋 Покупки", "purchases:"+dealID),
 			tgbotapi.NewInlineKeyboardButtonData("💰 Рассчитать", "calculate:"+dealID),
-		),
-		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(covLabel, "deal_coverages:"+dealID),
 		),
 		tgbotapi.NewInlineKeyboardRow(
@@ -301,6 +294,42 @@ func (h *Handler) showDealCovCoveredKeyboard(ctx context.Context, chatID int64, 
 	sendOrEdit(ctx, h.api, chatID, msgID, fmt.Sprintf("За кого платит %s?", payerName), &kb)
 }
 
+func (h *Handler) showParticipants(ctx context.Context, chatID int64, msgID int, dealID string) {
+	ctx, span := tracer.Start(ctx, "showParticipants")
+	defer span.End()
+
+	deal, err := h.client.GetDeal(ctx, dealID)
+	if err != nil {
+		sendOrEdit(ctx, h.api, chatID, msgID, "Ошибка при загрузке участников.", nil)
+		return
+	}
+
+	var sb strings.Builder
+	sb.WriteString("👤 Участники сделки:\n\n")
+	if len(deal.ParticipantIds) == 0 {
+		sb.WriteString("Участников пока нет.")
+	} else {
+		users, err := fetchUsers(ctx, h.client, deal.ParticipantIds)
+		if err != nil {
+			sendOrEdit(ctx, h.api, chatID, msgID, "Ошибка при загрузке имён участников.", nil)
+			return
+		}
+		for _, u := range users {
+			fmt.Fprintf(&sb, "• %s\n", u.Name)
+		}
+	}
+
+	kb := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("➕ Добавить участника", "add_participant:"+dealID),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("← Назад", "deal:"+dealID),
+		),
+	)
+	sendOrEdit(ctx, h.api, chatID, msgID, sb.String(), &kb)
+}
+
 func (h *Handler) showPurchases(ctx context.Context, chatID int64, msgID int, dealID string) {
 	ctx, span := tracer.Start(ctx, "showPurchases")
 	defer span.End()
@@ -311,18 +340,23 @@ func (h *Handler) showPurchases(ctx context.Context, chatID int64, msgID int, de
 		return
 	}
 
-	back := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("← Назад", "deal:"+dealID)),
+	bottomKb := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("➕ Добавить покупку", "add_purchase:"+dealID),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("← Назад", "deal:"+dealID),
+		),
 	)
 
 	if len(purchases) == 0 {
-		sendOrEdit(ctx, h.api, chatID, msgID, "Покупок пока нет.", &back)
+		sendOrEdit(ctx, h.api, chatID, msgID, "Покупок пока нет.", &bottomKb)
 		return
 	}
 
 	names := make(map[string]string)
 	var sb strings.Builder
-	sb.WriteString("Покупки:\n\n")
+	sb.WriteString("🛍 Покупки:\n\n")
 	var total int64
 	for _, p := range purchases {
 		payerName := resolveUserName(ctx, h.client, p.PaidBy, names)
@@ -330,7 +364,7 @@ func (h *Handler) showPurchases(ctx context.Context, chatID int64, msgID int, de
 		total += p.Amount
 	}
 	fmt.Fprintf(&sb, "\nИтого: %s ₽", formatAmount(total))
-	sendOrEdit(ctx, h.api, chatID, msgID, sb.String(), &back)
+	sendOrEdit(ctx, h.api, chatID, msgID, sb.String(), &bottomKb)
 }
 
 func (h *Handler) showCalculation(ctx context.Context, chatID int64, msgID int, dealID string) {
