@@ -6,6 +6,7 @@ import (
 
 	"github.com/mralexandrov/debt-bot/backend/internal/domain"
 	"github.com/mralexandrov/debt-bot/backend/internal/repository"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 type DebtService struct {
@@ -18,6 +19,10 @@ func NewDebtService(deals repository.DealRepository, purchases repository.Purcha
 }
 
 func (s *DebtService) Calculate(ctx context.Context, dealID string) (*domain.CalculationResult, error) {
+	ctx, span := tracer.Start(ctx, "DebtService.Calculate")
+	defer span.End()
+	span.SetAttributes(attribute.String("deal.id", dealID))
+
 	participants, err := s.deals.GetParticipants(ctx, dealID)
 	if err != nil {
 		return nil, err
@@ -33,8 +38,16 @@ func (s *DebtService) Calculate(ctx context.Context, dealID string) (*domain.Cal
 		return nil, err
 	}
 
+	span.SetAttributes(
+		attribute.Int("participant.count", len(participants)),
+		attribute.Int("purchase.count", len(purchases)),
+		attribute.Int("coverage.count", len(coverages)),
+	)
+
 	balances := calculateBalances(purchases, participants, coverages)
 	debts := minimizeTransactions(balances)
+
+	span.SetAttributes(attribute.Int("debt.count", len(debts)))
 
 	return &domain.CalculationResult{
 		Debts:    debts,

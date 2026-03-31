@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/mralexandrov/debt-bot/backend/internal/domain"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 type DealRepository struct {
@@ -19,6 +20,10 @@ func NewDealRepository(db *pgxpool.Pool) *DealRepository {
 }
 
 func (r *DealRepository) Create(ctx context.Context, title, createdBy string) (*domain.Deal, error) {
+	ctx, span := tracer.Start(ctx, "db.deals.Create")
+	defer span.End()
+	span.SetAttributes(attribute.String("deal.created_by", createdBy))
+
 	var d domain.Deal
 	err := r.db.QueryRow(ctx,
 		`INSERT INTO deals (title, created_by) VALUES ($1, $2) RETURNING id, title, created_by, created_at`,
@@ -27,10 +32,15 @@ func (r *DealRepository) Create(ctx context.Context, title, createdBy string) (*
 	if err != nil {
 		return nil, fmt.Errorf("create deal: %w", err)
 	}
+	span.SetAttributes(attribute.String("deal.id", d.ID))
 	return &d, nil
 }
 
 func (r *DealRepository) GetByID(ctx context.Context, id string) (*domain.Deal, error) {
+	ctx, span := tracer.Start(ctx, "db.deals.GetByID")
+	defer span.End()
+	span.SetAttributes(attribute.String("deal.id", id))
+
 	var d domain.Deal
 	err := r.db.QueryRow(ctx,
 		`SELECT id, title, created_by, created_at FROM deals WHERE id = $1`,
@@ -54,10 +64,22 @@ func (r *DealRepository) GetByID(ctx context.Context, id string) (*domain.Deal, 
 		return nil, err
 	}
 	d.Coverages = coverages
+	span.SetAttributes(
+		attribute.Int("participant.count", len(participants)),
+		attribute.Int("coverage.count", len(coverages)),
+	)
 	return &d, nil
 }
 
 func (r *DealRepository) SetCoverage(ctx context.Context, dealID, payerID, coveredID string) error {
+	ctx, span := tracer.Start(ctx, "db.deal_coverage.SetCoverage")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("deal.id", dealID),
+		attribute.String("coverage.payer_id", payerID),
+		attribute.String("coverage.covered_id", coveredID),
+	)
+
 	_, err := r.db.Exec(ctx,
 		`INSERT INTO deal_coverage (deal_id, payer_id, covered_id) VALUES ($1, $2, $3)
 		 ON CONFLICT (deal_id, covered_id) DO UPDATE SET payer_id = EXCLUDED.payer_id`,
@@ -70,6 +92,13 @@ func (r *DealRepository) SetCoverage(ctx context.Context, dealID, payerID, cover
 }
 
 func (r *DealRepository) RemoveCoverage(ctx context.Context, dealID, coveredID string) error {
+	ctx, span := tracer.Start(ctx, "db.deal_coverage.RemoveCoverage")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("deal.id", dealID),
+		attribute.String("coverage.covered_id", coveredID),
+	)
+
 	_, err := r.db.Exec(ctx,
 		`DELETE FROM deal_coverage WHERE deal_id = $1 AND covered_id = $2`,
 		dealID, coveredID,
@@ -81,6 +110,10 @@ func (r *DealRepository) RemoveCoverage(ctx context.Context, dealID, coveredID s
 }
 
 func (r *DealRepository) GetCoverages(ctx context.Context, dealID string) ([]domain.Coverage, error) {
+	ctx, span := tracer.Start(ctx, "db.deal_coverage.GetCoverages")
+	defer span.End()
+	span.SetAttributes(attribute.String("deal.id", dealID))
+
 	rows, err := r.db.Query(ctx,
 		`SELECT payer_id, covered_id FROM deal_coverage WHERE deal_id = $1`,
 		dealID,
@@ -102,6 +135,10 @@ func (r *DealRepository) GetCoverages(ctx context.Context, dealID string) ([]dom
 }
 
 func (r *DealRepository) ListByUserID(ctx context.Context, userID string) ([]*domain.Deal, error) {
+	ctx, span := tracer.Start(ctx, "db.deals.ListByUserID")
+	defer span.End()
+	span.SetAttributes(attribute.String("user.id", userID))
+
 	rows, err := r.db.Query(ctx,
 		`SELECT d.id, d.title, d.created_by, d.created_at
 		 FROM deals d
@@ -123,10 +160,18 @@ func (r *DealRepository) ListByUserID(ctx context.Context, userID string) ([]*do
 		}
 		deals = append(deals, &d)
 	}
+	span.SetAttributes(attribute.Int("deal.count", len(deals)))
 	return deals, rows.Err()
 }
 
 func (r *DealRepository) AddParticipant(ctx context.Context, dealID, userID string) error {
+	ctx, span := tracer.Start(ctx, "db.deal_participants.AddParticipant")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("deal.id", dealID),
+		attribute.String("user.id", userID),
+	)
+
 	_, err := r.db.Exec(ctx,
 		`INSERT INTO deal_participants (deal_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
 		dealID, userID,
@@ -138,6 +183,10 @@ func (r *DealRepository) AddParticipant(ctx context.Context, dealID, userID stri
 }
 
 func (r *DealRepository) GetParticipants(ctx context.Context, dealID string) ([]string, error) {
+	ctx, span := tracer.Start(ctx, "db.deal_participants.GetParticipants")
+	defer span.End()
+	span.SetAttributes(attribute.String("deal.id", dealID))
+
 	rows, err := r.db.Query(ctx,
 		`SELECT user_id FROM deal_participants WHERE deal_id = $1`,
 		dealID,

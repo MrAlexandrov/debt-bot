@@ -8,6 +8,7 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	pb "github.com/mralexandrov/debt-bot/frontend/telegram/gen/debt/v1"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 const platform = "telegram"
@@ -56,12 +57,36 @@ func (h *Handler) Run() error {
 	updates := h.api.GetUpdatesChan(u)
 	for update := range updates {
 		if update.CallbackQuery != nil {
-			h.handleCallback(update.CallbackQuery)
+			h.dispatchCallback(update.CallbackQuery)
 		} else if update.Message != nil {
-			h.handleMessage(update.Message)
+			h.dispatchMessage(update.Message)
 		}
 	}
 	return nil
+}
+
+func (h *Handler) dispatchMessage(msg *tgbotapi.Message) {
+	ctx, span := tracer.Start(context.Background(), "tg.message")
+	defer span.End()
+	span.SetAttributes(
+		attribute.Int64("tg.user_id", msg.From.ID),
+		attribute.Int64("tg.chat_id", msg.Chat.ID),
+	)
+	if msg.IsCommand() {
+		span.SetAttributes(attribute.String("tg.command", msg.Command()))
+	}
+	h.handleMessage(ctx, msg)
+}
+
+func (h *Handler) dispatchCallback(cb *tgbotapi.CallbackQuery) {
+	ctx, span := tracer.Start(context.Background(), "tg.callback")
+	defer span.End()
+	span.SetAttributes(
+		attribute.Int64("tg.user_id", cb.From.ID),
+		attribute.Int64("tg.chat_id", cb.Message.Chat.ID),
+		attribute.String("tg.callback_data", cb.Data),
+	)
+	h.handleCallback(ctx, cb)
 }
 
 // --- State helpers ---
@@ -75,7 +100,7 @@ func (h *Handler) getState(userID int64) *userState {
 	return h.states[userID]
 }
 
-func (h *Handler) resetState(userID int64) {
+func (h *Handler) resetState(ctx context.Context, userID int64) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.states[userID] = &userState{participantNames: make(map[string]string)}
@@ -83,21 +108,26 @@ func (h *Handler) resetState(userID int64) {
 
 // --- UI screens ---
 
-func (h *Handler) showMainMenu(chatID int64, msgID int, text string) {
+func (h *Handler) showMainMenu(ctx context.Context, chatID int64, msgID int, text string) {
+	ctx, span := tracer.Start(ctx, "showMainMenu")
+	defer span.End()
+
 	kb := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("📦 Создать сделку", "new_deal"),
 			tgbotapi.NewInlineKeyboardButtonData("📋 Мои сделки", "my_deals"),
 		),
 	)
-	sendOrEdit(h.api, chatID, msgID, text, &kb)
+	sendOrEdit(ctx, h.api, chatID, msgID, text, &kb)
 }
 
-func (h *Handler) showDealsList(chatID int64, msgID int, userID string) {
-	ctx := context.Background()
+func (h *Handler) showDealsList(ctx context.Context, chatID int64, msgID int, userID string) {
+	ctx, span := tracer.Start(ctx, "showDealsList")
+	defer span.End()
+
 	deals, err := h.client.ListUserDeals(ctx, userID)
 	if err != nil {
-		editText(h.api, chatID, msgID, "Ошибка при загрузке сделок.", nil)
+		editText(ctx, h.api, chatID, msgID, "Ошибка при загрузке сделок.", nil)
 		return
 	}
 
@@ -108,7 +138,7 @@ func (h *Handler) showDealsList(chatID int64, msgID int, userID string) {
 			tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("📦 Создать сделку", "new_deal")),
 			back,
 		)
-		sendOrEdit(h.api, chatID, msgID, "У вас пока нет сделок.", &kb)
+		sendOrEdit(ctx, h.api, chatID, msgID, "У вас пока нет сделок.", &kb)
 		return
 	}
 
@@ -121,14 +151,16 @@ func (h *Handler) showDealsList(chatID int64, msgID int, userID string) {
 	}
 	rows = append(rows, back)
 	kb := tgbotapi.NewInlineKeyboardMarkup(rows...)
-	sendOrEdit(h.api, chatID, msgID, "Ваши сделки:", &kb)
+	sendOrEdit(ctx, h.api, chatID, msgID, "Ваши сделки:", &kb)
 }
 
-func (h *Handler) showDealMenu(chatID int64, msgID int, dealID string) {
-	ctx := context.Background()
+func (h *Handler) showDealMenu(ctx context.Context, chatID int64, msgID int, dealID string) {
+	ctx, span := tracer.Start(ctx, "showDealMenu")
+	defer span.End()
+
 	deal, err := h.client.GetDeal(ctx, dealID)
 	if err != nil {
-		send(h.api, chatID, "Ошибка при загрузке сделки.", nil)
+		send(ctx, h.api, chatID, "Ошибка при загрузке сделки.", nil)
 		return
 	}
 	covCount := len(deal.Coverages)
@@ -153,14 +185,16 @@ func (h *Handler) showDealMenu(chatID int64, msgID int, dealID string) {
 			tgbotapi.NewInlineKeyboardButtonData("← К сделкам", "my_deals"),
 		),
 	)
-	sendOrEdit(h.api, chatID, msgID, text, &kb)
+	sendOrEdit(ctx, h.api, chatID, msgID, text, &kb)
 }
 
-func (h *Handler) showDealCoverageMenu(chatID int64, msgID int, dealID string) {
-	ctx := context.Background()
+func (h *Handler) showDealCoverageMenu(ctx context.Context, chatID int64, msgID int, dealID string) {
+	ctx, span := tracer.Start(ctx, "showDealCoverageMenu")
+	defer span.End()
+
 	deal, err := h.client.GetDeal(ctx, dealID)
 	if err != nil {
-		editText(h.api, chatID, msgID, "Ошибка при загрузке сделки.", nil)
+		editText(ctx, h.api, chatID, msgID, "Ошибка при загрузке сделки.", nil)
 		return
 	}
 
@@ -196,10 +230,13 @@ func (h *Handler) showDealCoverageMenu(chatID int64, msgID int, dealID string) {
 		),
 	)
 	kb := tgbotapi.NewInlineKeyboardMarkup(rows...)
-	sendOrEdit(h.api, chatID, msgID, sb.String(), &kb)
+	sendOrEdit(ctx, h.api, chatID, msgID, sb.String(), &kb)
 }
 
-func (h *Handler) showDealCovPayerKeyboard(chatID int64, msgID int, participants []*pb.User) {
+func (h *Handler) showDealCovPayerKeyboard(ctx context.Context, chatID int64, msgID int, participants []*pb.User) {
+	ctx, span := tracer.Start(ctx, "showDealCovPayerKeyboard")
+	defer span.End()
+
 	var rows [][]tgbotapi.InlineKeyboardButton
 	for _, p := range participants {
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
@@ -211,10 +248,13 @@ func (h *Handler) showDealCovPayerKeyboard(chatID int64, msgID int, participants
 		tgbotapi.NewInlineKeyboardButtonData("← Назад", "deal_cov_back"),
 	))
 	kb := tgbotapi.NewInlineKeyboardMarkup(rows...)
-	sendOrEdit(h.api, chatID, msgID, "Кто платит за другого?", &kb)
+	sendOrEdit(ctx, h.api, chatID, msgID, "Кто платит за другого?", &kb)
 }
 
-func (h *Handler) showDealCovCoveredKeyboard(chatID int64, msgID int, st *userState) {
+func (h *Handler) showDealCovCoveredKeyboard(ctx context.Context, chatID int64, msgID int, st *userState) {
+	ctx, span := tracer.Start(ctx, "showDealCovCoveredKeyboard")
+	defer span.End()
+
 	payerName := st.participantNames[st.pendingCovPayerID]
 	var rows [][]tgbotapi.InlineKeyboardButton
 	for id, name := range st.participantNames {
@@ -230,14 +270,16 @@ func (h *Handler) showDealCovCoveredKeyboard(chatID int64, msgID int, st *userSt
 		tgbotapi.NewInlineKeyboardButtonData("← Назад", "deal_cov_add"),
 	))
 	kb := tgbotapi.NewInlineKeyboardMarkup(rows...)
-	sendOrEdit(h.api, chatID, msgID, fmt.Sprintf("За кого платит %s?", payerName), &kb)
+	sendOrEdit(ctx, h.api, chatID, msgID, fmt.Sprintf("За кого платит %s?", payerName), &kb)
 }
 
-func (h *Handler) showPurchases(chatID int64, msgID int, dealID string) {
-	ctx := context.Background()
+func (h *Handler) showPurchases(ctx context.Context, chatID int64, msgID int, dealID string) {
+	ctx, span := tracer.Start(ctx, "showPurchases")
+	defer span.End()
+
 	purchases, err := h.client.ListDealPurchases(ctx, dealID)
 	if err != nil {
-		editText(h.api, chatID, msgID, "Ошибка при загрузке покупок.", nil)
+		editText(ctx, h.api, chatID, msgID, "Ошибка при загрузке покупок.", nil)
 		return
 	}
 
@@ -246,7 +288,7 @@ func (h *Handler) showPurchases(chatID int64, msgID int, dealID string) {
 	)
 
 	if len(purchases) == 0 {
-		sendOrEdit(h.api, chatID, msgID, "Покупок пока нет.", &back)
+		sendOrEdit(ctx, h.api, chatID, msgID, "Покупок пока нет.", &back)
 		return
 	}
 
@@ -260,14 +302,16 @@ func (h *Handler) showPurchases(chatID int64, msgID int, dealID string) {
 		total += p.Amount
 	}
 	fmt.Fprintf(&sb, "\nИтого: %s ₽", formatAmount(total))
-	sendOrEdit(h.api, chatID, msgID, sb.String(), &back)
+	sendOrEdit(ctx, h.api, chatID, msgID, sb.String(), &back)
 }
 
-func (h *Handler) showCalculation(chatID int64, msgID int, dealID string) {
-	ctx := context.Background()
+func (h *Handler) showCalculation(ctx context.Context, chatID int64, msgID int, dealID string) {
+	ctx, span := tracer.Start(ctx, "showCalculation")
+	defer span.End()
+
 	result, err := h.client.CalculateDebts(ctx, dealID)
 	if err != nil {
-		editText(h.api, chatID, msgID, "Ошибка при расчёте.", nil)
+		editText(ctx, h.api, chatID, msgID, "Ошибка при расчёте.", nil)
 		return
 	}
 
@@ -276,7 +320,7 @@ func (h *Handler) showCalculation(chatID int64, msgID int, dealID string) {
 	)
 
 	if len(result.Debts) == 0 {
-		sendOrEdit(h.api, chatID, msgID, "✅ Все в расчёте, долгов нет!", &back)
+		sendOrEdit(ctx, h.api, chatID, msgID, "✅ Все в расчёте, долгов нет!", &back)
 		return
 	}
 
@@ -288,7 +332,7 @@ func (h *Handler) showCalculation(chatID int64, msgID int, dealID string) {
 		to := h.resolveUserName(ctx, d.ToUserId, names)
 		fmt.Fprintf(&sb, "• %s → %s: %s ₽\n", from, to, formatAmount(d.Amount))
 	}
-	sendOrEdit(h.api, chatID, msgID, sb.String(), &back)
+	sendOrEdit(ctx, h.api, chatID, msgID, sb.String(), &back)
 }
 
 func (h *Handler) sendPayerKeyboard(chatID int64, participants []*pb.User) {

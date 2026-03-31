@@ -28,7 +28,7 @@ services:
       - postgres
 
   jaeger:
-    image: jaegertracing/all-in-one:latest
+    image: jaegertracing/all-in-one:1.76.0
     ports:
       - "127.0.0.1:16686:16686"  # Jaeger UI
       - "127.0.0.1:4318:4318"    # OTLP HTTP
