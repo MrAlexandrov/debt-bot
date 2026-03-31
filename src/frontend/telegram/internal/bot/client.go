@@ -4,7 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	pb "github.com/mrralexandrov/debt-bot/frontend/telegram/gen/debt/v1"
+	pb "github.com/mralexandrov/debt-bot/frontend/telegram/gen/debt/v1"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -14,7 +15,10 @@ type Client struct {
 }
 
 func NewClient(addr string) (*Client, error) {
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(addr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("connect to backend: %w", err)
 	}

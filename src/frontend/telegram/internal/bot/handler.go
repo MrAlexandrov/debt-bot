@@ -7,7 +7,7 @@ import (
 	"sync"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	pb "github.com/mrralexandrov/debt-bot/frontend/telegram/gen/debt/v1"
+	pb "github.com/mralexandrov/debt-bot/frontend/telegram/gen/debt/v1"
 )
 
 const platform = "telegram"

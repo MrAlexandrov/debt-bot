@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/mrralexandrov/debt-bot/backend/internal/domain"
-	"github.com/mrralexandrov/debt-bot/backend/internal/repository"
+	"github.com/mralexandrov/debt-bot/backend/internal/domain"
+	"github.com/mralexandrov/debt-bot/backend/internal/repository"
 )
 
 type DealService struct {

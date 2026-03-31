@@ -3,7 +3,7 @@ package service
 import (
 	"testing"
 
-	"github.com/mrralexandrov/debt-bot/backend/internal/domain"
+	"github.com/mralexandrov/debt-bot/backend/internal/domain"
 )
 
 func TestCalculateBalances_ExampleFromSpec(t *testing.T) {

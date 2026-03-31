@@ -3,7 +3,7 @@ package repository
 import (
 	"context"
 
-	"github.com/mrralexandrov/debt-bot/backend/internal/domain"
+	"github.com/mralexandrov/debt-bot/backend/internal/domain"
 )
 
 type UserRepository interface {

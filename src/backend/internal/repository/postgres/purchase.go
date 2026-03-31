@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/mrralexandrov/debt-bot/backend/internal/domain"
+	"github.com/mralexandrov/debt-bot/backend/internal/domain"
 )
 
 type PurchaseRepository struct {

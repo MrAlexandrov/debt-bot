@@ -4,9 +4,9 @@ import (
 	"context"
 	"time"
 
-	pb "github.com/mrralexandrov/debt-bot/backend/gen/debt/v1"
-	"github.com/mrralexandrov/debt-bot/backend/internal/domain"
-	"github.com/mrralexandrov/debt-bot/backend/internal/service"
+	pb "github.com/mralexandrov/debt-bot/backend/gen/debt/v1"
+	"github.com/mralexandrov/debt-bot/backend/internal/domain"
+	"github.com/mralexandrov/debt-bot/backend/internal/service"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )

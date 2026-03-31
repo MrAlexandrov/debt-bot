@@ -27,6 +27,13 @@ services:
     depends_on:
       - postgres
 
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - "127.0.0.1:16686:16686"  # Jaeger UI
+      - "127.0.0.1:4318:4318"    # OTLP HTTP
+    restart: unless-stopped
+
   backend:
     build:
       context: .
@@ -34,9 +41,12 @@ services:
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
       GRPC_PORT: "50051"
+      OTLP_ENDPOINT: jaeger:4318
     depends_on:
       postgres:
         condition: service_healthy
+      jaeger:
+        condition: service_started
     restart: unless-stopped
 
   telegram-bot:
@@ -46,6 +56,7 @@ services:
     environment:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
       BACKEND_ADDR: backend:50051
+      OTLP_ENDPOINT: jaeger:4318
     depends_on:
       - backend
     restart: unless-stopped
