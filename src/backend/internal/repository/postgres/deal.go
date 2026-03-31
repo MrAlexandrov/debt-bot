@@ -182,6 +182,24 @@ func (r *DealRepository) AddParticipant(ctx context.Context, dealID, userID stri
 	return nil
 }
 
+func (r *DealRepository) RemoveParticipant(ctx context.Context, dealID, userID string) error {
+	ctx, span := tracer.Start(ctx, "db.deal_participants.RemoveParticipant")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("deal.id", dealID),
+		attribute.String("user.id", userID),
+	)
+
+	_, err := r.db.Exec(ctx,
+		`DELETE FROM deal_participants WHERE deal_id = $1 AND user_id = $2`,
+		dealID, userID,
+	)
+	if err != nil {
+		return fmt.Errorf("remove deal participant: %w", err)
+	}
+	return nil
+}
+
 func (r *DealRepository) GetParticipants(ctx context.Context, dealID string) ([]string, error) {
 	ctx, span := tracer.Start(ctx, "db.deal_participants.GetParticipants")
 	defer span.End()

@@ -80,6 +80,26 @@ func (r *PurchaseRepository) ListByDealID(ctx context.Context, dealID string) ([
 	return purchases, nil
 }
 
+func (r *PurchaseRepository) Delete(ctx context.Context, purchaseID string) error {
+	ctx, span := tracer.Start(ctx, "db.purchases.Delete")
+	defer span.End()
+	span.SetAttributes(attribute.String("purchase.id", purchaseID))
+
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `DELETE FROM purchase_participants WHERE purchase_id = $1`, purchaseID); err != nil {
+		return fmt.Errorf("delete purchase participants: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM purchases WHERE id = $1`, purchaseID); err != nil {
+		return fmt.Errorf("delete purchase: %w", err)
+	}
+	return tx.Commit(ctx)
+}
+
 func (r *PurchaseRepository) AddParticipant(ctx context.Context, purchaseID, userID string) error {
 	ctx, span := tracer.Start(ctx, "db.purchase_participants.AddParticipant")
 	defer span.End()

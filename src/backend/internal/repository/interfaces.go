@@ -21,6 +21,7 @@ type DealRepository interface {
 	GetByID(ctx context.Context, id string) (*domain.Deal, error)
 	ListByUserID(ctx context.Context, userID string) ([]*domain.Deal, error)
 	AddParticipant(ctx context.Context, dealID, userID string) error
+	RemoveParticipant(ctx context.Context, dealID, userID string) error
 	GetParticipants(ctx context.Context, dealID string) ([]string, error)
 	SetCoverage(ctx context.Context, dealID, payerID, coveredID string) error
 	RemoveCoverage(ctx context.Context, dealID, coveredID string) error
@@ -30,6 +31,7 @@ type DealRepository interface {
 type PurchaseRepository interface {
 	Create(ctx context.Context, dealID, title string, amount int64, paidBy, splitMode string) (*domain.Purchase, error)
 	ListByDealID(ctx context.Context, dealID string) ([]*domain.Purchase, error)
+	Delete(ctx context.Context, purchaseID string) error
 	AddParticipant(ctx context.Context, purchaseID, userID string) error
 	GetParticipants(ctx context.Context, purchaseID string) ([]string, error)
 }

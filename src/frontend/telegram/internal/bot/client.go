@@ -24,6 +24,8 @@ type DebtClient interface {
 	RemoveDealCoverage(ctx context.Context, dealID, coveredID string) (*pb.Deal, error)
 	AddPurchase(ctx context.Context, dealID, title string, amount int64, paidBy, splitMode string, participantIDs []string) (*pb.Purchase, error)
 	ListDealPurchases(ctx context.Context, dealID string) ([]*pb.Purchase, error)
+	RemoveDealParticipant(ctx context.Context, dealID, userID string) (*pb.Deal, error)
+	RemovePurchase(ctx context.Context, dealID, purchaseID string) (*pb.Deal, error)
 	CalculateDebts(ctx context.Context, dealID string) (*pb.CalculateDebtsResponse, error)
 }
 
@@ -153,6 +155,28 @@ func (c *Client) ListDealPurchases(ctx context.Context, dealID string) ([]*pb.Pu
 		return nil, err
 	}
 	return resp.Purchases, nil
+}
+
+func (c *Client) RemoveDealParticipant(ctx context.Context, dealID, userID string) (*pb.Deal, error) {
+	resp, err := c.conn.RemoveDealParticipant(ctx, &pb.RemoveDealParticipantRequest{
+		DealId: dealID,
+		UserId: userID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Deal, nil
+}
+
+func (c *Client) RemovePurchase(ctx context.Context, dealID, purchaseID string) (*pb.Deal, error) {
+	resp, err := c.conn.RemovePurchase(ctx, &pb.RemovePurchaseRequest{
+		DealId:     dealID,
+		PurchaseId: purchaseID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Deal, nil
 }
 
 func (c *Client) CalculateDebts(ctx context.Context, dealID string) (*pb.CalculateDebtsResponse, error) {

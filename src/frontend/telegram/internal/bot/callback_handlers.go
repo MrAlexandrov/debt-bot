@@ -29,6 +29,7 @@ func (h *Handler) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery
 		"deal_cov_add":  func() { h.handleDealCoverageAdd(ctx, tgID, chatID, msgID) },
 		"deal_cov_back": func() { h.handleDealCoverageBack(ctx, tgID, chatID, msgID) },
 		"back":          func() { h.handleBack(ctx, tgID, chatID, msgID) },
+		"noop":          func() {}, // placeholder button — no action
 	}
 
 	if handler, ok := exactHandlers[data]; ok {
@@ -41,7 +42,7 @@ func (h *Handler) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery
 		handler func()
 	}{
 		{"deal:", func() { h.handleDeal(ctx, tgID, chatID, msgID, cb) }},
-		{"participants:", func() { h.handleParticipants(ctx, chatID, msgID, cb) }},
+		{"participants:", func() { h.handleParticipants(ctx, tgID, chatID, msgID, cb) }},
 		{"add_participant:", func() { h.handleAddParticipant(ctx, tgID, chatID, msgID, cb) }},
 		{"add_purchase:", func() { h.handleAddPurchase(ctx, tgID, chatID, msgID, cb) }},
 		{"purchases:", func() { h.handlePurchases(ctx, chatID, msgID, cb) }},
@@ -50,6 +51,8 @@ func (h *Handler) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery
 		{"deal_cov_payer:", func() { h.handleDealCoveragePayer(ctx, tgID, chatID, msgID, cb) }},
 		{"deal_cov_covered:", func() { h.handleDealCoverageCovered(ctx, tgID, chatID, msgID, cb) }},
 		{"deal_cov_remove:", func() { h.handleDealCoverageRemove(ctx, tgID, chatID, msgID, cb) }},
+		{"del_participant:", func() { h.handleDeleteParticipant(ctx, tgID, chatID, msgID, cb) }},
+		{"del_purchase:", func() { h.handleDeletePurchase(ctx, tgID, chatID, msgID, cb) }},
 		{"payer:", func() { h.handleCreatePurchase(ctx, tgID, chatID, msgID, cb) }},
 	}
 
@@ -122,11 +125,12 @@ func (h *Handler) handleAddPurchase(ctx context.Context, tgID, chatID int64, msg
 	editText(ctx, h.api, chatID, msgID, "Введите название покупки:", &kb)
 }
 
-func (h *Handler) handleParticipants(ctx context.Context, chatID int64, msgID int, cb *tgbotapi.CallbackQuery) {
+func (h *Handler) handleParticipants(ctx context.Context, tgID, chatID int64, msgID int, cb *tgbotapi.CallbackQuery) {
 	ctx, span := tracer.Start(ctx, "handleParticipants")
 	defer span.End()
 
 	dealID := strings.TrimPrefix(cb.Data, "participants:")
+	h.sm.Get(tgID).dealID = dealID
 	h.showParticipants(ctx, chatID, msgID, dealID)
 }
 
@@ -272,6 +276,41 @@ func (h *Handler) handleCreatePurchase(ctx context.Context, tgID, chatID int64, 
 	h.sm.Reset(tgID)
 	editText(ctx, h.api, chatID, msgID, fmt.Sprintf("✅ Покупка «%s» добавлена!", title), nil)
 	h.showPurchases(ctx, chatID, 0, dealID)
+}
+
+func (h *Handler) handleDeleteParticipant(ctx context.Context, tgID, chatID int64, msgID int, cb *tgbotapi.CallbackQuery) {
+	ctx, span := tracer.Start(ctx, "handleDeleteParticipant")
+	defer span.End()
+
+	userID := strings.TrimPrefix(cb.Data, "del_participant:")
+	st := h.sm.Get(tgID)
+	if st.dealID == "" {
+		editText(ctx, h.api, chatID, msgID, "Сессия устарела. Начните заново.", nil)
+		return
+	}
+	if _, err := h.client.RemoveDealParticipant(ctx, st.dealID, userID); err != nil {
+		msg := grpcUserMessage(err, "Ошибка при удалении участника.")
+		editText(ctx, h.api, chatID, msgID, msg, nil)
+		return
+	}
+	h.showParticipants(ctx, chatID, msgID, st.dealID)
+}
+
+func (h *Handler) handleDeletePurchase(ctx context.Context, tgID, chatID int64, msgID int, cb *tgbotapi.CallbackQuery) {
+	ctx, span := tracer.Start(ctx, "handleDeletePurchase")
+	defer span.End()
+
+	purchaseID := strings.TrimPrefix(cb.Data, "del_purchase:")
+	st := h.sm.Get(tgID)
+	if st.dealID == "" {
+		editText(ctx, h.api, chatID, msgID, "Сессия устарела. Начните заново.", nil)
+		return
+	}
+	if _, err := h.client.RemovePurchase(ctx, st.dealID, purchaseID); err != nil {
+		editText(ctx, h.api, chatID, msgID, "Ошибка при удалении покупки.", nil)
+		return
+	}
+	h.showPurchases(ctx, chatID, msgID, st.dealID)
 }
 
 func (h *Handler) handleBack(ctx context.Context, tgID, chatID int64, msgID int) {

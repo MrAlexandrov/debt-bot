@@ -21,9 +21,13 @@ service DebtService {
   rpc SetDealCoverage(SetDealCoverageRequest) returns (SetDealCoverageResponse);
   rpc RemoveDealCoverage(RemoveDealCoverageRequest) returns (RemoveDealCoverageResponse);
 
+  // Participants
+  rpc RemoveDealParticipant(RemoveDealParticipantRequest) returns (RemoveDealParticipantResponse);
+
   // Purchases
   rpc AddPurchase(AddPurchaseRequest) returns (AddPurchaseResponse);
   rpc ListDealPurchases(ListDealPurchasesRequest) returns (ListDealPurchasesResponse);
+  rpc RemovePurchase(RemovePurchaseRequest) returns (RemovePurchaseResponse);
 
   // Debt calculation
   rpc CalculateDebts(CalculateDebtsRequest) returns (CalculateDebtsResponse);
@@ -151,6 +155,28 @@ message AddDealParticipantRequest {
 }
 
 message AddDealParticipantResponse {
+  Deal deal = 1;
+}
+
+// --- RemoveDealParticipant ---
+
+message RemoveDealParticipantRequest {
+  string deal_id = 1;
+  string user_id = 2;
+}
+
+message RemoveDealParticipantResponse {
+  Deal deal = 1;
+}
+
+// --- RemovePurchase ---
+
+message RemovePurchaseRequest {
+  string deal_id    = 1;
+  string purchase_id = 2;
+}
+
+message RemovePurchaseResponse {
   Deal deal = 1;
 }
 

@@ -6,6 +6,7 @@ import (
 
 	pb "github.com/mralexandrov/debt-bot/backend/gen/debt/v1"
 	"github.com/mralexandrov/debt-bot/backend/internal/domain"
+	"errors"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -28,6 +29,8 @@ type DealService interface {
 	RemoveCoverage(ctx context.Context, dealID, coveredID string) (*domain.Deal, error)
 	AddPurchase(ctx context.Context, dealID, title string, amount int64, paidBy, splitMode string, participantIDs []string) (*domain.Purchase, error)
 	ListPurchases(ctx context.Context, dealID string) ([]*domain.Purchase, error)
+	RemoveParticipant(ctx context.Context, dealID, userID string) (*domain.Deal, error)
+	RemovePurchase(ctx context.Context, dealID, purchaseID string) (*domain.Deal, error)
 }
 
 // DebtService describes the debt-calculation operations required by this handler.
@@ -157,6 +160,31 @@ func (h *Handler) ListDealPurchases(ctx context.Context, req *pb.ListDealPurchas
 		pbPurchases = append(pbPurchases, domainPurchaseToProto(p))
 	}
 	return &pb.ListDealPurchasesResponse{Purchases: pbPurchases}, nil
+}
+
+func (h *Handler) RemoveDealParticipant(ctx context.Context, req *pb.RemoveDealParticipantRequest) (*pb.RemoveDealParticipantResponse, error) {
+	deal, err := h.deals.RemoveParticipant(ctx, req.DealId, req.UserId)
+	if err != nil {
+		switch {
+		case errors.Is(err, domain.ErrParticipantHasPurchases):
+			return nil, status.Error(codes.FailedPrecondition, "участник оплачивал покупки в этой сделке")
+		case errors.Is(err, domain.ErrParticipantIsCoveragePayer):
+			return nil, status.Error(codes.FailedPrecondition, "участник является плательщиком в покрытии — сначала удалите покрытие")
+		case errors.Is(err, domain.ErrParticipantIsCovered):
+			return nil, status.Error(codes.FailedPrecondition, "участник покрывается другим участником — сначала удалите покрытие")
+		default:
+			return nil, status.Errorf(codes.Internal, "remove participant: %v", err)
+		}
+	}
+	return &pb.RemoveDealParticipantResponse{Deal: domainDealToProto(deal)}, nil
+}
+
+func (h *Handler) RemovePurchase(ctx context.Context, req *pb.RemovePurchaseRequest) (*pb.RemovePurchaseResponse, error) {
+	deal, err := h.deals.RemovePurchase(ctx, req.DealId, req.PurchaseId)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "remove purchase: %v", err)
+	}
+	return &pb.RemovePurchaseResponse{Deal: domainDealToProto(deal)}, nil
 }
 
 // --- Debt ---

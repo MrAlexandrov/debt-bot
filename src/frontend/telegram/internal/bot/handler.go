@@ -304,22 +304,26 @@ func (h *Handler) showParticipants(ctx context.Context, chatID int64, msgID int,
 		return
 	}
 
-	var sb strings.Builder
-	sb.WriteString("👤 Участники сделки:\n\n")
-	if len(deal.ParticipantIds) == 0 {
-		sb.WriteString("Участников пока нет.")
-	} else {
+	var rows [][]tgbotapi.InlineKeyboardButton
+
+	text := "👤 Участники сделки:\n\nУчастников пока нет."
+	if len(deal.ParticipantIds) > 0 {
 		users, err := fetchUsers(ctx, h.client, deal.ParticipantIds)
 		if err != nil {
 			sendOrEdit(ctx, h.api, chatID, msgID, "Ошибка при загрузке имён участников.", nil)
 			return
 		}
+		text = "👤 Участники сделки:"
 		for _, u := range users {
-			fmt.Fprintf(&sb, "• %s\n", u.Name)
+			// "del_participant:{userID}" → 17+36=53 chars ✓
+			rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData(u.Name, "noop"),
+				tgbotapi.NewInlineKeyboardButtonData("❌", "del_participant:"+u.Id),
+			))
 		}
 	}
 
-	kb := tgbotapi.NewInlineKeyboardMarkup(
+	rows = append(rows,
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("➕ Добавить участника", "add_participant:"+dealID),
 		),
@@ -327,7 +331,8 @@ func (h *Handler) showParticipants(ctx context.Context, chatID int64, msgID int,
 			tgbotapi.NewInlineKeyboardButtonData("← Назад", "deal:"+dealID),
 		),
 	)
-	sendOrEdit(ctx, h.api, chatID, msgID, sb.String(), &kb)
+	kb := tgbotapi.NewInlineKeyboardMarkup(rows...)
+	sendOrEdit(ctx, h.api, chatID, msgID, text, &kb)
 }
 
 func (h *Handler) showPurchases(ctx context.Context, chatID int64, msgID int, dealID string) {
@@ -358,13 +363,22 @@ func (h *Handler) showPurchases(ctx context.Context, chatID int64, msgID int, de
 	var sb strings.Builder
 	sb.WriteString("🛍 Покупки:\n\n")
 	var total int64
+	var purchaseRows [][]tgbotapi.InlineKeyboardButton
 	for _, p := range purchases {
 		payerName := resolveUserName(ctx, h.client, p.PaidBy, names)
 		fmt.Fprintf(&sb, "• %s — %s ₽ (платил %s)\n", p.Title, formatAmount(p.Amount), payerName)
 		total += p.Amount
+		// "del_purchase:{purchaseID}" → 13+36=49 chars ✓
+		purchaseRows = append(purchaseRows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("❌ "+p.Title, "del_purchase:"+p.Id),
+		))
 	}
 	fmt.Fprintf(&sb, "\nИтого: %s ₽", formatAmount(total))
-	sendOrEdit(ctx, h.api, chatID, msgID, sb.String(), &bottomKb)
+
+	// Merge: delete buttons per purchase + bottom action buttons
+	allRows := append(purchaseRows, bottomKb.InlineKeyboard...)
+	fullKb := tgbotapi.NewInlineKeyboardMarkup(allRows...)
+	sendOrEdit(ctx, h.api, chatID, msgID, sb.String(), &fullKb)
 }
 
 func (h *Handler) showCalculation(ctx context.Context, chatID int64, msgID int, dealID string) {

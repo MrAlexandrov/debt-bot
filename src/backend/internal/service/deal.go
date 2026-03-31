@@ -132,6 +132,63 @@ func (s *DealService) RemoveCoverage(ctx context.Context, dealID, coveredID stri
 	return s.deals.GetByID(ctx, dealID)
 }
 
+// RemoveParticipant removes a user from a deal.
+// Returns a domain sentinel error if any of these constraints are violated:
+//   - ErrParticipantHasPurchases    — user is paidBy on at least one purchase
+//   - ErrParticipantIsCoveragePayer — user pays for someone else in a coverage
+//   - ErrParticipantIsCovered       — user's share is covered by someone else
+func (s *DealService) RemoveParticipant(ctx context.Context, dealID, userID string) (*domain.Deal, error) {
+	ctx, span := tracer.Start(ctx, "DealService.RemoveParticipant")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("deal.id", dealID),
+		attribute.String("user.id", userID),
+	)
+
+	purchases, err := s.purchases.ListByDealID(ctx, dealID)
+	if err != nil {
+		return nil, fmt.Errorf("list purchases: %w", err)
+	}
+	for _, p := range purchases {
+		if p.PaidBy == userID {
+			return nil, domain.ErrParticipantHasPurchases
+		}
+	}
+
+	coverages, err := s.deals.GetCoverages(ctx, dealID)
+	if err != nil {
+		return nil, fmt.Errorf("get coverages: %w", err)
+	}
+	for _, c := range coverages {
+		if c.PayerID == userID {
+			return nil, domain.ErrParticipantIsCoveragePayer
+		}
+		if c.CoveredID == userID {
+			return nil, domain.ErrParticipantIsCovered
+		}
+	}
+
+	if err := s.deals.RemoveParticipant(ctx, dealID, userID); err != nil {
+		return nil, err
+	}
+	return s.deals.GetByID(ctx, dealID)
+}
+
+// RemovePurchase deletes a purchase from a deal.
+func (s *DealService) RemovePurchase(ctx context.Context, dealID, purchaseID string) (*domain.Deal, error) {
+	ctx, span := tracer.Start(ctx, "DealService.RemovePurchase")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("deal.id", dealID),
+		attribute.String("purchase.id", purchaseID),
+	)
+
+	if err := s.purchases.Delete(ctx, purchaseID); err != nil {
+		return nil, err
+	}
+	return s.deals.GetByID(ctx, dealID)
+}
+
 func (s *DealService) ListPurchases(ctx context.Context, dealID string) ([]*domain.Purchase, error) {
 	ctx, span := tracer.Start(ctx, "DealService.ListPurchases")
 	defer span.End()
