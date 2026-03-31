@@ -96,3 +96,72 @@ func TestCalculateBalances_CustomSplit(t *testing.T) {
 		t.Errorf("carol balance = %d, want 0", balances["carol"])
 	}
 }
+
+func TestCalculateBalances_WithCoverage(t *testing.T) {
+	// alice pays for carol — carol's share is billed to alice instead
+	participants := []string{"alice", "bob", "carol"}
+	purchases := []*domain.Purchase{
+		{PaidBy: "bob", Amount: 300, SplitMode: domain.SplitModeAll},
+	}
+	coverages := []domain.Coverage{{PayerID: "alice", CoveredID: "carol"}}
+
+	balances := calculateBalances(purchases, participants, coverages)
+
+	// 300 / 3 = 100 each
+	// alice is charged for herself (−100) AND for carol (−100) → net = 200 − 300 = −200? No:
+	// alice pays 0, is charged 200 (own 100 + carol's 100) → −200
+	// bob pays 300, is charged 100 → +200
+	// carol is covered, charged 0 → 0
+	if balances["alice"] != -200 {
+		t.Errorf("alice balance = %d, want -200", balances["alice"])
+	}
+	if balances["bob"] != 200 {
+		t.Errorf("bob balance = %d, want 200", balances["bob"])
+	}
+	if balances["carol"] != 0 {
+		t.Errorf("carol balance = %d, want 0", balances["carol"])
+	}
+}
+
+func TestCalculateBalances_NoPurchases(t *testing.T) {
+	participants := []string{"alice", "bob"}
+	balances := calculateBalances(nil, participants, nil)
+	for _, uid := range participants {
+		if balances[uid] != 0 {
+			t.Errorf("balance[%s] = %d, want 0", uid, balances[uid])
+		}
+	}
+}
+
+func TestMinimizeTransactions_AllZero(t *testing.T) {
+	balances := map[string]int64{"alice": 0, "bob": 0}
+	debts := minimizeTransactions(balances)
+	if len(debts) != 0 {
+		t.Errorf("expected no debts, got %v", debts)
+	}
+}
+
+func TestMinimizeTransactions_MultipleCreditors(t *testing.T) {
+	// Two creditors, one debtor
+	// alice +300, bob +200, carol -500
+	// carol should pay alice 300, carol should pay bob 200 → 2 transactions
+	balances := map[string]int64{
+		"alice": 300,
+		"bob":   200,
+		"carol": -500,
+	}
+	debts := minimizeTransactions(balances)
+	if len(debts) != 2 {
+		t.Errorf("expected 2 transactions, got %d: %v", len(debts), debts)
+	}
+	var totalOut int64
+	for _, d := range debts {
+		if d.FromUserID != "carol" {
+			t.Errorf("expected carol as debtor, got %s", d.FromUserID)
+		}
+		totalOut += d.Amount
+	}
+	if totalOut != 500 {
+		t.Errorf("total transferred = %d, want 500", totalOut)
+	}
+}

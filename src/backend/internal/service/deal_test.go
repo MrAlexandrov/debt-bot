@@ -209,6 +209,157 @@ func TestRemoveParticipant_AllowedWhenNoPurchasesOrCoverages(t *testing.T) {
 	}
 }
 
+// --- DealService.AddParticipant tests ---
+
+func TestAddParticipant_AddsParticipant(t *testing.T) {
+	dealRepo := newFakeDealRepo()
+	svc := NewDealService(dealRepo, newFakePurchaseRepo())
+	dealRepo.deals["deal-1"] = &domain.Deal{ID: "deal-1", Title: "T", CreatedBy: "alice"}
+
+	deal, err := svc.AddParticipant(context.Background(), "deal-1", "bob")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(deal.ParticipantIDs) != 1 || deal.ParticipantIDs[0] != "bob" {
+		t.Errorf("expected [bob], got %v", deal.ParticipantIDs)
+	}
+}
+
+// --- DealService.AddPurchase tests ---
+
+func TestAddPurchase_SplitModeAll(t *testing.T) {
+	svc := NewDealService(newFakeDealRepo(), newFakePurchaseRepo())
+
+	p, err := svc.AddPurchase(context.Background(), "deal-1", "Dinner", 3000, "alice", domain.SplitModeAll, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if p.Title != "Dinner" || p.Amount != 3000 || p.PaidBy != "alice" {
+		t.Errorf("unexpected purchase: %+v", p)
+	}
+	if len(p.ParticipantIDs) != 0 {
+		t.Errorf("SplitModeAll should not set ParticipantIDs, got %v", p.ParticipantIDs)
+	}
+}
+
+func TestAddPurchase_SplitModeCustom(t *testing.T) {
+	svc := NewDealService(newFakeDealRepo(), newFakePurchaseRepo())
+
+	participants := []string{"alice", "bob"}
+	p, err := svc.AddPurchase(context.Background(), "deal-1", "Taxi", 600, "alice", domain.SplitModeCustom, participants)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(p.ParticipantIDs) != 2 {
+		t.Errorf("expected 2 custom participants, got %v", p.ParticipantIDs)
+	}
+}
+
+// --- DealService.SetCoverage / RemoveCoverage tests ---
+
+func TestSetCoverage_StoresCoverage(t *testing.T) {
+	dealRepo := newFakeDealRepo()
+	svc := NewDealService(dealRepo, newFakePurchaseRepo())
+	dealRepo.deals["deal-1"] = &domain.Deal{ID: "deal-1", Title: "T", CreatedBy: "alice"}
+
+	_, err := svc.SetCoverage(context.Background(), "deal-1", "alice", "bob")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	covs := dealRepo.coverages["deal-1"]
+	if len(covs) != 1 || covs[0].PayerID != "alice" || covs[0].CoveredID != "bob" {
+		t.Errorf("unexpected coverages: %v", covs)
+	}
+}
+
+func TestRemoveCoverage_DeletesCoverage(t *testing.T) {
+	dealRepo := newFakeDealRepo()
+	svc := NewDealService(dealRepo, newFakePurchaseRepo())
+	dealRepo.deals["deal-1"] = &domain.Deal{ID: "deal-1", Title: "T", CreatedBy: "alice"}
+	dealRepo.coverages["deal-1"] = []domain.Coverage{{PayerID: "alice", CoveredID: "bob"}}
+
+	_, err := svc.RemoveCoverage(context.Background(), "deal-1", "bob")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(dealRepo.coverages["deal-1"]) != 0 {
+		t.Error("coverage should have been removed")
+	}
+}
+
+// --- DealService.ListPurchases tests ---
+
+func TestListPurchases_ReturnsPurchases(t *testing.T) {
+	purchaseRepo := newFakePurchaseRepo()
+	svc := NewDealService(newFakeDealRepo(), purchaseRepo)
+	purchaseRepo.purchases["deal-1"] = []*domain.Purchase{
+		{ID: "p-1", DealID: "deal-1", Title: "A", Amount: 100, PaidBy: "alice", SplitMode: domain.SplitModeAll},
+		{ID: "p-2", DealID: "deal-1", Title: "B", Amount: 200, PaidBy: "bob", SplitMode: domain.SplitModeAll},
+	}
+
+	ps, err := svc.ListPurchases(context.Background(), "deal-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(ps) != 2 {
+		t.Errorf("expected 2 purchases, got %d", len(ps))
+	}
+}
+
+// --- DealService.GetByID / ListByUserID tests ---
+
+func TestGetByID_ReturnsDeal(t *testing.T) {
+	dealRepo := newFakeDealRepo()
+	svc := NewDealService(dealRepo, newFakePurchaseRepo())
+	dealRepo.deals["deal-1"] = &domain.Deal{ID: "deal-1", Title: "Hello", CreatedBy: "alice"}
+
+	deal, err := svc.GetByID(context.Background(), "deal-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if deal.Title != "Hello" {
+		t.Errorf("expected title 'Hello', got %q", deal.Title)
+	}
+}
+
+func TestListByUserID_ReturnsDealList(t *testing.T) {
+	dealRepo := newFakeDealRepo()
+	svc := NewDealService(dealRepo, newFakePurchaseRepo())
+	// fakeDealRepo.ListByUserID always returns nil, nil — just verify no error
+	deals, err := svc.ListByUserID(context.Background(), "alice")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	_ = deals
+}
+
+// --- DebtService.Calculate integration test ---
+
+func TestDebtService_Calculate_SimpleCase(t *testing.T) {
+	dealRepo := newFakeDealRepo()
+	purchaseRepo := newFakePurchaseRepo()
+
+	dealRepo.participants["deal-1"] = []string{"alice", "bob"}
+	purchaseRepo.purchases["deal-1"] = []*domain.Purchase{
+		{ID: "p-1", DealID: "deal-1", Title: "Lunch", Amount: 200, PaidBy: "alice", SplitMode: domain.SplitModeAll},
+	}
+
+	svc := NewDebtService(dealRepo, purchaseRepo)
+	result, err := svc.Calculate(context.Background(), "deal-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// alice paid 200, split equally: each owes 100
+	// alice net +100, bob net −100 → bob owes alice 100
+	if len(result.Debts) != 1 {
+		t.Fatalf("expected 1 debt, got %d: %v", len(result.Debts), result.Debts)
+	}
+	d := result.Debts[0]
+	if d.FromUserID != "bob" || d.ToUserID != "alice" || d.Amount != 100 {
+		t.Errorf("unexpected debt: %+v", d)
+	}
+}
+
 // --- DealService.RemovePurchase tests ---
 
 func TestRemovePurchase_RemovesPurchase(t *testing.T) {
